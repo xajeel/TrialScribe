@@ -1,8 +1,6 @@
 from operator import add
 from pydantic import BaseModel, Field
-from typing import Annotated, List, Dict, Optional
-
-
+from typing import Annotated, List, Optional
 
 
 class Query(BaseModel):
@@ -11,9 +9,7 @@ class Query(BaseModel):
 
 class SearchQueries(BaseModel):
   queries: Query = Field(description="The queries to be answered")
-  
 
-# planner.py
 
 class subsection(BaseModel):
     title: str
@@ -33,13 +29,3 @@ class AgentState(BaseModel):
     summary: str = Field(description="Summary of the trail design")
     written_texts: Annotated[List[str], add] = Field(description="List of written texts")
     research: bool = False
-
-
-#  Researcher.py 
-
-class Query(BaseModel):
-  pubmed: str
-  tavily: str
-
-class SearchQueries(BaseModel):
-  queries: Query = Field(description="The queries to be answered")

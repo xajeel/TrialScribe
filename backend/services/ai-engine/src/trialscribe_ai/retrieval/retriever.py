@@ -1,9 +1,6 @@
-from src.database import EvidenceDatabase
-from utils.util import llm
-from utils.prompt import PromptFamily
-
-from dotenv import load_dotenv
-import os
+from trialscribe_ai.storage.evidence_db import EvidenceDatabase
+from trialscribe_ai.core.llm import llm
+from trialscribe_ai.prompts.templates import PromptFamily
 
 class Retriever:
     def __init__(self):

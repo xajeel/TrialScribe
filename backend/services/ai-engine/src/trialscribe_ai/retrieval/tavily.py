@@ -1,10 +1,8 @@
 from langchain_tavily import TavilySearch
+from trialscribe_ai.config.settings import MAX_RESULTS, ALLOWED_WEBSITES_FILE
 import yaml
-import os
 
-MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
-
-def init_web_searc_tool(path):
+def load_allowed_domains(path):
     with open(path, "r") as f:
         domains = yaml.safe_load(f)
 
@@ -14,7 +12,7 @@ def init_web_searc_tool(path):
 web_search_tool = TavilySearch(
           max_results=MAX_RESULTS,
           topic="general",
-          include_domains=init_web_searc_tool("config/allowed_websites.yml"),
+          include_domains=load_allowed_domains(ALLOWED_WEBSITES_FILE),
         )
 
 

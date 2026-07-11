@@ -2,15 +2,14 @@ import streamlit as st
 import json
 import os
 import tempfile
-from config.schemas import AgentState
-from src.researcher import ResearchAgent
-from utils.retrievers.trialprocessor import TrialDataProcessor
-from src.planner import planner_agent
-from src.database import EvidenceDatabase
-# from src.writer import Writer
-from utils.util import llm
+from trialscribe_ai.models.schemas import AgentState
+from trialscribe_ai.agents.researcher import ResearchAgent
+from trialscribe_ai.retrieval.trial_processor import TrialDataProcessor
+from trialscribe_ai.agents.planner import planner_agent
+from trialscribe_ai.storage.evidence_db import EvidenceDatabase
+from trialscribe_ai.core.llm import llm
 from langgraph.graph import StateGraph, END
-from src.writer import build_writer_agent
+from trialscribe_ai.agents.writer import build_writer_agent
 
 trial_processor = TrialDataProcessor()
 database = EvidenceDatabase()

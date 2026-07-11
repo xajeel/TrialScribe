@@ -1,6 +1,6 @@
-from config.schemas import AgentState, Sections
-from utils.util import llm
-from utils.prompt import PromptFamily
+from trialscribe_ai.models.schemas import AgentState, Sections
+from trialscribe_ai.core.llm import llm
+from trialscribe_ai.prompts.templates import PromptFamily
 
 
 def planner_agent(state: AgentState, model=llm):

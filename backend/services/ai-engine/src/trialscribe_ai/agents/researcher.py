@@ -1,12 +1,9 @@
-from config.schemas import SearchQueries
-from utils.retrievers.pubmed import PubMedAgent
-from src.database import EvidenceDatabase
-from utils.retrievers.tavilytool import search_tool
-from utils.util import llm
-import os
-
-MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
-os.environ["TAVILY_API_KEY"] = os.getenv("TAVILY_API_KEY")
+from trialscribe_ai.models.schemas import SearchQueries
+from trialscribe_ai.retrieval.pubmed import PubMedAgent
+from trialscribe_ai.storage.evidence_db import EvidenceDatabase
+from trialscribe_ai.retrieval.tavily import search_tool
+from trialscribe_ai.core.llm import llm
+from trialscribe_ai.config.settings import MAX_RESULTS
 
 class ResearchAgent:
     def __init__(self, llm):

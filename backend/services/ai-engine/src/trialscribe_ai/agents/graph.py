@@ -1,12 +1,8 @@
-from config.schemas import AgentState, Sections
-from src.actions.composer import output_composer
-from src.researcher import ResearchAgent
-from utils.retrievers.trialprocessor import TrialDataProcessor
-from src.planner import planner_agent
-from src.retriever import Retriever
-from src.writer import build_writer_agent
-from src.database import EvidenceDatabase
-from utils.util import llm
+from trialscribe_ai.models.schemas import AgentState
+from trialscribe_ai.agents.researcher import ResearchAgent
+from trialscribe_ai.agents.planner import planner_agent
+from trialscribe_ai.agents.writer import build_writer_agent
+from trialscribe_ai.core.llm import llm
 
 from langgraph.graph import StateGraph, END
 
@@ -37,4 +33,3 @@ def graph_builder():
 
 if __name__ == "__main__":
     graph_builder()
-

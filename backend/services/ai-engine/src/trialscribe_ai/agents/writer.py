@@ -1,13 +1,10 @@
-# from retriever import Retriever
-from config.schemas import AgentState
-from src.retriever import Retriever
-from utils.util import llm
-from utils.prompt import PromptFamily
+from trialscribe_ai.models.schemas import AgentState
+from trialscribe_ai.retrieval.retriever import Retriever
+from trialscribe_ai.core.llm import llm
+from trialscribe_ai.prompts.templates import PromptFamily
+from trialscribe_ai.config.settings import K_VALUE, NUM_WORDS
 from langgraph.graph import StateGraph, END
-import os
 
-K_value = int(os.getenv("K_value", "10"))
-NUM_WORDS = int(os.getenv("NUM_WORDS", "500"))
 retriever = Retriever()
 
 def writer_agent(state: AgentState, section_data, model=llm):
@@ -20,7 +17,7 @@ def writer_agent(state: AgentState, section_data, model=llm):
     subsections = section.get("subsections", [])
 
     retrive_data = retriever.retrieve(
-        user_query, section_title, section_description, k=K_value)
+        user_query, section_title, section_description, k=K_VALUE)
 
     prompt = PromptFamily.generate_output_prompt(
         title=section_title,

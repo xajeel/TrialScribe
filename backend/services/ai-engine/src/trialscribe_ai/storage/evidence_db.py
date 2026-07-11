@@ -1,14 +1,12 @@
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
-from utils.prompt import PromptFamily
+from trialscribe_ai.prompts.templates import PromptFamily
 from typing import List, Dict
 import os
 
-from utils.util import embedding_model, llm
+from trialscribe_ai.core.llm import embedding_model, llm
 
 class EvidenceDatabase:
     def __init__(self, user_index_path: str = "userdata_index", evidence_index_path: str = "evidence_index"):

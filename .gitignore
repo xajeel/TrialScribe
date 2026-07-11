@@ -16,3 +16,11 @@ evidence_index/
 videos/
 .sdlc/
 .cursor/
+
+# Frontend (React)
+node_modules/
+frontend/web/dist/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
