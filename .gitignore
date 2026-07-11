@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+evidence_db/
+
+# Virtual environments
+.venv
+faiss_index/
+userdata_index/
+evidence_index/
+.env
+videos/
+.sdlc/
+.cursor/
