@@ -1,0 +1,23 @@
+services:
+  ai-engine:
+    build:
+      context: .
+      dockerfile: backend/services/ai-engine/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend/services/ai-engine/data:/app/backend/services/ai-engine/data
+
+  streamlit-ui:
+    build:
+      context: .
+      dockerfile: backend/services/ai-engine/Dockerfile
+    command: ["uv", "run", "--package", "trialscribe-streamlit", "streamlit", "run", "frontend/streamlit-ui/app.py", "--server.address", "0.0.0.0"]
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    depends_on:
+      - ai-engine
