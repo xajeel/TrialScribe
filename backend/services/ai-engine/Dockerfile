@@ -2,17 +2,15 @@ FROM python:3.12-slim
 
 RUN pip install --no-cache-dir uv
 
-WORKDIR /app
+WORKDIR /app/backend
 
-# Whole workspace is copied because uv needs every member's pyproject.toml to
-# resolve the monorepo, and this single image serves both the ai-engine API
-# and the interim Streamlit UI (selected via docker-compose's `command:`).
-COPY pyproject.toml uv.lock .python-version ./
-COPY backend/services/ai-engine backend/services/ai-engine
-COPY frontend/streamlit-ui frontend/streamlit-ui
+# The whole backend/ uv workspace is copied so uv can resolve it
+# (workspace root pyproject.toml + lock live at backend/, this service
+# is its sole member).
+COPY backend/ .
 
 RUN uv sync --frozen --all-packages
 
-EXPOSE 8000 8501
+EXPOSE 8000
 
 CMD ["uv", "run", "--package", "trialscribe-ai", "uvicorn", "trialscribe_ai.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
