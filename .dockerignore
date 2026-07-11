@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+node_modules
+frontend/web/dist
+.env
+.sdlc
+.cursor
+faiss_index
+userdata_index
+evidence_index
+evidence_db

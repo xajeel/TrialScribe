@@ -1,0 +1,12 @@
+[project]
+name = "trialscribe-backend"
+version = "0.1.0"
+description = "TrialScribe backend — uv workspace root for all Python services"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["ruff>=0.4", "pytest>=8"]
+
+[tool.uv.workspace]
+members = ["services/ai-engine"]
