@@ -43,16 +43,17 @@ See [docs/architecture.md](docs/architecture.md) for the full system design and 
 
 ```
 pip install uv
-uv sync --all-packages
+./scripts.sh sync
 ```
 
-| Purpose   | Command (from repo root) |
-|-----------|---------------------------|
-| API       | `uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --reload` |
-| Streamlit | `uv run --package trialscribe-streamlit streamlit run frontend/streamlit-ui/app.py` |
-| Both via Docker | `docker compose up` |
-| Smoke tests | `uv run --package trialscribe-ai pytest backend/services/ai-engine/tests/` |
+| Purpose   | Command |
+|-----------|---------|
+| API       | `./scripts.sh api` |
+| Streamlit | `./scripts.sh ui` |
+| Both via Docker | `./scripts.sh up` (or `docker compose up`) |
+| Lint | `./scripts.sh lint` |
+| Smoke tests | `./scripts.sh test` |
 
-Or simply `make api` / `make ui` / `make test` / `make up` (see [Makefile](Makefile)).
+`backend/` is its own uv workspace (workspace root: [backend/pyproject.toml](backend/pyproject.toml), sole member: `services/ai-engine`). `frontend/streamlit-ui` is a separate, standalone uv project with its own lockfile — it depends on `trialscribe-ai` via an editable path dependency rather than sharing the backend workspace, since `frontend/` is expected to become a Node/React project once `frontend/web` replaces it.
 
 Copy `.env_example` to `.env` and fill in `OPENAI_API_KEY`, `TAVILY_API_KEY`, and `NCBI_API_KEY` before running.

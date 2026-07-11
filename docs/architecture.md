@@ -36,6 +36,19 @@ deployment — see the Roadmap below for how it evolves.
 `frontend/streamlit-ui` is a thin Streamlit app that drives the same agent pipeline directly
 (without going through the FastAPI session API) for local demos and manual testing.
 
+### Repository tooling structure
+
+`backend/` is a self-contained uv workspace: `backend/pyproject.toml` is the workspace root,
+with `services/ai-engine` as its sole member. `frontend/streamlit-ui` is deliberately **not**
+part of that workspace — it's a standalone uv project with its own lockfile, depending on
+`trialscribe-ai` via an editable path dependency (`../../backend/services/ai-engine`). This
+keeps `backend/` purely Python-tooled and `frontend/` free to become a Node/React project
+without the two toolchains ever needing to share a workspace root.
+
+One consequence: because it resolves its own dependency graph independently, `ai-engine`'s
+`pyproject.toml` pins upper bounds on every dependency (not just lower bounds) so a fresh
+resolve in either project lands on the same tested version set instead of drifting apart.
+
 ## Roadmap
 
 The monorepo layout anticipates the following services as independent, addable units:

@@ -8,12 +8,16 @@ exposed as a FastAPI service.
 
 ## Run locally
 
-From the repo root (so `.env` and the FAISS runtime indexes resolve correctly):
+From `backend/` (`load_dotenv()` searches upward from cwd, so the repo-root `.env` still
+resolves; the FAISS runtime indexes are created relative to wherever you run from):
 
 ```
+cd backend
 uv sync --all-packages
 uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --reload
 ```
+
+Or from the repo root: `./scripts.sh api`.
 
 API docs: `http://localhost:8000/docs`
 
@@ -30,5 +34,8 @@ API docs: `http://localhost:8000/docs`
 ## Tests
 
 ```
-uv run --package trialscribe-ai pytest backend/services/ai-engine/tests/
+cd backend
+uv run --package trialscribe-ai pytest services/ai-engine/tests/
 ```
+
+Or from the repo root: `./scripts.sh test`.
