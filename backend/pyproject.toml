@@ -1,7 +1,7 @@
 [project]
-name = "trialscribe-monorepo"
+name = "trialscribe-backend"
 version = "0.1.0"
-description = "TrialScribe — AI clinical trial protocol platform (monorepo)"
+description = "TrialScribe backend — uv workspace root for all Python services"
 requires-python = ">=3.12"
 dependencies = []
 
@@ -9,4 +9,4 @@ dependencies = []
 dev = ["ruff>=0.4", "pytest>=8"]
 
 [tool.uv.workspace]
-members = ["backend/services/ai-engine", "frontend/streamlit-ui"]
+members = ["services/ai-engine"]
