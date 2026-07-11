@@ -9,4 +9,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-trialscribe-ai = { workspace = true }
+trialscribe-ai = { path = "../../backend/services/ai-engine", editable = true }
