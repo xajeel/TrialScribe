@@ -10,7 +10,11 @@ resolution-markers = [
 [manifest]
 members = [
     "trialscribe-ai",
+    "trialscribe-auth",
     "trialscribe-backend",
+    "trialscribe-gateway",
+    "trialscribe-user",
+    "trialscribe-worker",
 ]
 
 [[package]]
@@ -3708,6 +3712,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "trialscribe-auth"
+version = "0.1.0"
+source = { editable = "services/auth-service" }
+dependencies = [
+    { name = "fastapi", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
+
+[[package]]
 name = "trialscribe-backend"
 version = "0.1.0"
 source = { virtual = "." }
@@ -3725,6 +3740,39 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.4" },
 ]
+
+[[package]]
+name = "trialscribe-gateway"
+version = "0.1.0"
+source = { editable = "services/api-gateway" }
+dependencies = [
+    { name = "fastapi", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
+
+[[package]]
+name = "trialscribe-user"
+version = "0.1.0"
+source = { editable = "services/user-service" }
+dependencies = [
+    { name = "fastapi", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
+
+[[package]]
+name = "trialscribe-worker"
+version = "0.1.0"
+source = { editable = "services/worker-service" }
+dependencies = [
+    { name = "fastapi", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
 
 [[package]]
 name = "typer"

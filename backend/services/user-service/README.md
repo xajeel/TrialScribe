@@ -1,25 +1,14 @@
 # user-service
 
-**Status:** planned
+**Status:** runnable shell
 
-Owns durable user, account, and organization data for TrialScribe. Replaces the AI engine's
-current in-memory `ACTIVE_SESSIONS` model with persistent records so sessions, uploaded
-documents, and generated reports survive restarts and are attributable to a real user.
+The user service currently exposes only process health. User records, organizations,
+ownership, persistence, and report history are deferred to later features.
 
-## Planned responsibility
+From `backend/`, run it directly with:
 
-- User and organization CRUD.
-- Persistent trial-generation session/report history (currently in-memory in `ai-engine`).
-- Ownership and access checks for uploaded documents and generated protocols.
+```bash
+uv run --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port 8002
+```
 
-## Planned tech stack
-
-FastAPI, SQLAlchemy + Alembic migrations, PostgreSQL.
-
-## Planned API surface
-
-- `POST /users` — create a user (typically called by `auth-service` on signup).
-- `GET /users/{user_id}` — fetch a user's profile.
-- `GET /organizations/{org_id}/members` — list an organization's users.
-- `POST /organizations` — create an organization.
-- `GET /users/{user_id}/sessions` — list a user's past trial-generation sessions/reports.
+Health is available at `GET /health/live` and `GET /health/ready`.
