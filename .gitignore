@@ -16,6 +16,7 @@ evidence_index/
 videos/
 .sdlc/
 .cursor/
+.claude/
 
 # Frontend (React)
 node_modules/
@@ -24,3 +25,4 @@ frontend/web/dist/
 # Tooling caches
 .ruff_cache/
 .pytest_cache/
+.agents/
