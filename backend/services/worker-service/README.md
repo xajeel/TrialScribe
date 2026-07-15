@@ -1,26 +1,15 @@
 # worker-service
 
-**Status:** planned
+**Status:** runnable shell
 
-Runs long-running work outside the request/response cycle. Today, `POST
-/sessions/{id}/generate-report` blocks on the full planner → researcher → writer pipeline for
-the duration of the HTTP request. This service will move that execution to a background job
-queue with status polling.
+The worker currently exposes only a health companion application. Queues, polling, job
+execution, retries, progress tracking, and AI pipeline integration are deferred to later
+features.
 
-## Planned responsibility
+From `backend/`, run it directly with:
 
-- Execute the LangGraph pipeline (and future PubMed/Tavily research calls) as background jobs.
-- Job status tracking (queued / running / done / failed) with progress per protocol section.
-- Retry and dead-letter handling for failed generation jobs.
+```bash
+uv run --package trialscribe-worker uvicorn trialscribe_worker.api.app:app --host 0.0.0.0 --port 8004
+```
 
-## Planned tech stack
-
-Celery or ARQ with Redis as the broker/result backend, sharing the `trialscribe-ai` package
-as a dependency for the actual pipeline logic.
-
-## Planned API surface
-
-- `POST /jobs/generate-report` — enqueue a report-generation job, returns a job ID.
-- `GET /jobs/{job_id}` — poll job status and progress.
-- `GET /jobs/{job_id}/result` — fetch the completed report once done.
-- `DELETE /jobs/{job_id}` — cancel a queued or running job.
+Health is available at `GET /health/live` and `GET /health/ready`.

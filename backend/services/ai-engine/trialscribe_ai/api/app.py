@@ -11,6 +11,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 
 from trialscribe_ai.retrieval.trial_processor import TrialDataProcessor
+from trialscribe_ai.models.health import HealthResponse
 from trialscribe_ai.models.schemas import AgentState
 from trialscribe_ai.api.sessions import (
     session_manager,
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
     yield
     cleanup_task.cancel()
 
-app = FastAPI(
+app: FastAPI = FastAPI(
     title="TrialScribe API",
     version="2.0.0",
     description="Multi-user clinical trial protocol generation API",
@@ -44,6 +45,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health/live", response_model=HealthResponse)
+async def liveness() -> HealthResponse:
+    return HealthResponse(status="ok", service="ai-engine", version=app.version)
+
+
+@app.get("/health/ready", response_model=HealthResponse)
+async def readiness() -> HealthResponse:
+    return HealthResponse(status="ready", service="ai-engine", version=app.version)
 
 
 @app.post("/sessions", response_model=SessionResponse)

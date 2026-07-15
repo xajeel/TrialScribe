@@ -25,6 +25,8 @@ API docs: `http://localhost:8000/docs`
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/health/live` | Report process liveness |
+| GET | `/health/ready` | Report readiness to accept work |
 | POST | `/sessions` | Create a session |
 | DELETE | `/sessions/{session_id}` | Delete a session |
 | POST | `/sessions/{session_id}/upload-json` | Upload trial design JSON |

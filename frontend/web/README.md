@@ -1,25 +1,19 @@
 # frontend/web
 
-**Status:** planned
+**Status:** runnable shell
 
-The React + TypeScript SPA that will replace `frontend/streamlit-ui` as TrialScribe's primary
-frontend once the backend exposes stable session, auth, and job-status APIs.
+This React application is the future supported TrialScribe browser client. It currently
+renders only a platform-ready shell; routing, API access, authentication, uploads, and
+protocol authoring are deferred to later features.
 
-## Planned responsibility
+Use Node.js 24.18.0 and npm 11.16.0, then run from this directory:
 
-- Trial JSON + supporting document upload flow.
-- Research query submission and live job-status/progress display (once `worker-service` exists).
-- Rendering generated protocol sections with citations, and basic report history per user.
-- Auth flows (login/logout) against `auth-service`.
+```bash
+npm ci
+npm run dev
+npm run lint
+npm test
+npm run build
+```
 
-## Planned tech stack
-
-React + TypeScript, Vite, a data-fetching layer (e.g. TanStack Query) against the FastAPI
-services, deployed as a static build served separately from the backend.
-
-## Planned API surface consumed
-
-- `ai-engine`: `/sessions`, `/sessions/{id}/upload-json`, `/sessions/{id}/upload-documents`,
-  `/sessions/{id}/generate-report` (or the async `worker-service` job endpoints once available).
-- `auth-service`: `/auth/login`, `/auth/refresh`, `/auth/me`.
-- `user-service`: `/users/{id}/sessions` for report history.
+The development server listens on `http://localhost:5173` by default.
