@@ -12,11 +12,14 @@ See [docs/architecture.md](docs/architecture.md) for the full system design and 
 
 ## Quickstart
 
-Install `uv`, Node.js 24.18.0, and npm 11.16.0, then run:
+Install `uv`, Node.js 24.18.0, npm 11.16.0, and Docker Compose 2.24.4 or newer,
+then run:
 
 ```bash
 ./scripts.sh env
 ./scripts.sh install
+./scripts.sh infra up
+./scripts.sh infra check
 ./scripts.sh lint
 ./scripts.sh test
 ./scripts.sh smoke
@@ -49,14 +52,38 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Lint Python and TypeScript | `./scripts.sh lint` |
 | Run all service tests | `./scripts.sh test` |
 | Smoke-test all boundaries | `./scripts.sh smoke` |
+| Start local infrastructure | `./scripts.sh infra up` |
+| Check local infrastructure | `./scripts.sh infra check` |
+| Stop local infrastructure | `./scripts.sh infra down` |
+| Test isolated infrastructure | `./scripts.sh infra test` |
 | Show command help | `./scripts.sh help` |
 
 The existing `sync`, `api`, `ui`, and `up` commands remain compatibility aliases. `api` now
 uses the AI boundary's standard port 8003; `ui` continues to run the interim Streamlit app,
 and `up` continues to use the existing Docker Compose stack.
 
+## Local infrastructure
+
+`./scripts.sh infra up` starts PostgreSQL with pgvector on `127.0.0.1:5432`, Redis on
+`127.0.0.1:6379`, and Apache Kafka on `127.0.0.1:9092`. The command creates `.env` from
+`.env_example` when needed and waits until all three containers are healthy. Update the
+local-only placeholder passwords in `.env` when your environment requires different values.
+
+Development data lives in Docker named volumes under the `trialscribe-dev` Compose project.
+`infra down` stops containers without deleting those volumes, so ordinary stops and restarts
+preserve data. To explicitly remove development containers and data, run:
+
+```bash
+docker compose --env-file .env -p trialscribe-dev --profile infrastructure down --volumes
+```
+
+`./scripts.sh infra test` uses the separate `trialscribe-test` project without publishing
+host ports. It verifies database, vector, Redis, and Kafka operations across a restart, then
+always removes its test containers, network, and volumes.
+
 ## Repository layout
 
 - `backend/` — uv workspace containing gateway, auth, user, AI, and worker packages.
 - `frontend/web/` — supported React application shell.
 - `frontend/streamlit-ui/` — interim standalone Streamlit UI.
+- `infra/` — local Docker Compose initialization assets.

@@ -1,0 +1,10 @@
+# Requires Docker Compose 2.24.4 or newer for the !reset tag.
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  kafka:
+    ports: !reset []

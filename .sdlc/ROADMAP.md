@@ -3,7 +3,7 @@
 | # | Feature | Needs | Status |
 |---|---------|-------|--------|
 | 1 | platform-skeleton | — | done |
-| 2 | local-runtime-infrastructure | 1 | todo |
+| 2 | local-runtime-infrastructure | 1 | done |
 | 3 | postgres-data-foundation | 2 | todo |
 | 4 | user-authentication | 3 | todo |
 | 5 | organization-rbac | 4 | todo |

@@ -14,6 +14,7 @@ Commands:
   lint     Run Ruff checks and the React TypeScript check
   test     Run every backend service test and the React test suite
   smoke    Start and health-check every platform boundary
+  infra    Manage local infrastructure: up, check, down, or test
   help     Show this help
 
 Compatibility aliases:
@@ -22,6 +23,99 @@ Compatibility aliases:
   ui       Run the interim Streamlit UI
   up       Build and start the existing Docker Compose stack
 EOF
+}
+
+ensure_env() {
+  local env_file="$repo_root/.env"
+  local example_file="$repo_root/.env_example"
+  local key
+  local template_line
+  local -a infrastructure_keys=(
+    POSTGRES_USER
+    POSTGRES_PASSWORD
+    POSTGRES_DB
+    POSTGRES_PORT
+    REDIS_PASSWORD
+    REDIS_PORT
+    KAFKA_PORT
+  )
+
+  if [[ ! -e "$env_file" ]]; then
+    cp "$example_file" "$env_file"
+    echo "Created .env from .env_example."
+    return
+  fi
+
+  for key in "${infrastructure_keys[@]}"; do
+    if grep -q "^${key}=" "$env_file"; then
+      continue
+    fi
+    template_line="$(grep -m 1 "^${key}=" "$example_file")"
+    if [[ -z "$template_line" ]]; then
+      echo "Missing ${key} in both .env and .env_example." >&2
+      return 1
+    fi
+    printf '%s\n' "$template_line" >> "$env_file"
+  done
+}
+
+run_infrastructure() {
+  local action="${1:-}"
+  local -a dev_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-dev
+    --profile infrastructure
+  )
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-test
+    -f docker-compose.yml
+    -f docker-compose.test.yml
+    --profile infrastructure
+  )
+
+  case "$action" in
+    up)
+      ensure_env
+      (
+        cd "$repo_root"
+        "${dev_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka
+      )
+      ;;
+    check)
+      ensure_env
+      python3 "$repo_root/scripts/check_infrastructure.py" \
+        --project-name trialscribe-dev \
+        --compose-file docker-compose.yml
+      ;;
+    down)
+      ensure_env
+      (cd "$repo_root" && "${dev_compose[@]}" down)
+      ;;
+    test)
+      ensure_env
+      (
+        cd "$repo_root"
+        cleanup_test_infrastructure() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_test_infrastructure EXIT
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka
+        python3 "$repo_root/scripts/check_infrastructure.py" \
+          --project-name trialscribe-test \
+          --compose-file docker-compose.yml \
+          --compose-file docker-compose.test.yml \
+          --verify-restart-persistence
+      )
+      ;;
+    *)
+      echo "Unknown infrastructure action: ${action:-<missing>}" >&2
+      echo "Choose one of: up, check, down, test" >&2
+      return 1
+      ;;
+  esac
 }
 
 run_service() {
@@ -61,8 +155,7 @@ case "${1:-}" in
     if [[ -e "$repo_root/.env" ]]; then
       echo ".env already exists; leaving it unchanged."
     else
-      cp "$repo_root/.env_example" "$repo_root/.env"
-      echo "Created .env from .env_example."
+      ensure_env
     fi
     ;;
   run)
@@ -95,6 +188,9 @@ case "${1:-}" in
     ;;
   smoke)
     python3 "$repo_root/scripts/smoke_platform.py"
+    ;;
+  infra)
+    run_infrastructure "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)
