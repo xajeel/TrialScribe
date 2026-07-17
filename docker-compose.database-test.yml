@@ -1,0 +1,6 @@
+# Restores PostgreSQL host access after docker-compose.test.yml removes ports.
+# An empty host port asks Docker to choose an available loopback port.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1::5432"

@@ -20,6 +20,7 @@ then run:
 ./scripts.sh install
 ./scripts.sh infra up
 ./scripts.sh infra check
+./scripts.sh db migrate
 ./scripts.sh lint
 ./scripts.sh test
 ./scripts.sh smoke
@@ -56,6 +57,9 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Check local infrastructure | `./scripts.sh infra check` |
 | Stop local infrastructure | `./scripts.sh infra down` |
 | Test isolated infrastructure | `./scripts.sh infra test` |
+| Migrate PostgreSQL to current | `./scripts.sh db migrate` |
+| Check PostgreSQL revision | `./scripts.sh db current` |
+| Test isolated database lifecycle | `./scripts.sh db test` |
 | Show command help | `./scripts.sh help` |
 
 The existing `sync`, `api`, `ui`, and `up` commands remain compatibility aliases. `api` now
@@ -81,9 +85,21 @@ docker compose --env-file .env -p trialscribe-dev --profile infrastructure down 
 host ports. It verifies database, vector, Redis, and Kafka operations across a restart, then
 always removes its test containers, network, and volumes.
 
+## PostgreSQL schema lifecycle
+
+`./scripts.sh db migrate` applies the ordered Alembic migrations using `DATABASE_URL` from
+`.env`; `./scripts.sh db current` verifies that database is at the single current revision.
+Neither command prints the connection URL or password.
+
+`./scripts.sh db test` is destructive only to its isolated `trialscribe-db-test` Compose
+project. It starts a fresh PostgreSQL volume on a Docker-assigned loopback port, tests empty
+and previous-revision upgrades, transaction rollback, organization scope, pgvector, and
+restart persistence, then always removes its containers, network, and volume.
+
 ## Repository layout
 
 - `backend/` — uv workspace containing gateway, auth, user, AI, and worker packages.
+- `backend/packages/database/` — shared PostgreSQL runtime and ordered migrations.
 - `frontend/web/` — supported React application shell.
 - `frontend/streamlit-ui/` — interim standalone Streamlit UI.
 - `infra/` — local Docker Compose initialization assets.
