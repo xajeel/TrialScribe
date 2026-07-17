@@ -1,0 +1,19 @@
+[project]
+name = "trialscribe-database"
+version = "0.1.0"
+description = "Shared PostgreSQL runtime and migration foundation for TrialScribe"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic==1.18.5",
+    "pgvector==0.5.0",
+    "psycopg[binary]==3.3.4",
+    "pydantic-settings==2.14.2",
+    "sqlalchemy[asyncio]==2.0.51",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["trialscribe_db"]

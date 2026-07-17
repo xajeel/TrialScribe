@@ -8,10 +8,12 @@ Source: derived from codebase · 2026-07-15
 - Streamlit 1.59.1
 - Node.js 24.18.0 LTS · npm 11.16.0 · React/React DOM 19.2.7 · TypeScript 7.0.2 · Vite 8.1.4 · Vitest 4.1.10 · `@vitejs/plugin-react` 6.0.3 · React types 19.2.17/19.2.3
 - PostgreSQL 18 + pgvector 0.8.2 · Redis 8.8.0 · Apache Kafka 4.3.1 in KRaft mode
+- SQLAlchemy 2.0.51 · Alembic 1.18.5 · Psycopg 3.3.4 · pgvector-python 0.5.0 · pydantic-settings 2.14.2
 - pytest 9.1.1 · Ruff 0.15.21
 > New dependency → latest stable, exact version recorded here in the same task.
 
 ## Structure
+- `backend/packages/database/trialscribe_db/` → shared PostgreSQL configuration, model conventions, migrations, and async transaction runtime; tests live in `backend/packages/database/tests/test_*.py`
 - `backend/services/api-gateway/trialscribe_gateway/` → FastAPI gateway boundary; tests live in `backend/services/api-gateway/tests/test_*.py`
 - `backend/services/auth-service/trialscribe_auth/` → FastAPI authentication boundary; tests live in `backend/services/auth-service/tests/test_*.py`
 - `backend/services/user-service/trialscribe_user/` → FastAPI user boundary; tests live in `backend/services/user-service/tests/test_*.py`
@@ -43,7 +45,9 @@ Source: derived from codebase · 2026-07-15
 - One concern per module; API routes, models, retrieval, storage, and graph construction remain separate.
 
 ## Config & secrets
-- Runtime config is read from environment variables in `backend/services/ai-engine/trialscribe_ai/config/settings.py`.
+- AI provider and workflow settings are read from environment variables in `backend/services/ai-engine/trialscribe_ai/config/settings.py`.
+- Shared database settings are read from environment variables in `backend/packages/database/trialscribe_db/config.py`.
+- Both settings modules read environment variables; `DATABASE_URL` is secret-backed and remains redacted in representations and errors.
 - Every new key → `.env_example` with a placeholder in the same task.
 - Never hardcode secrets, external service credentials, or deployment URLs in source.
 

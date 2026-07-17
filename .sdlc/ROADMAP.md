@@ -4,7 +4,7 @@
 |---|---------|-------|--------|
 | 1 | platform-skeleton | — | done |
 | 2 | local-runtime-infrastructure | 1 | done |
-| 3 | postgres-data-foundation | 2 | todo |
+| 3 | postgres-data-foundation | 2 | done |
 | 4 | user-authentication | 3 | todo |
 | 5 | organization-rbac | 4 | todo |
 | 6 | api-gateway | 2, 4, 5 | todo |

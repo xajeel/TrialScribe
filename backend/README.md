@@ -8,6 +8,12 @@ root and `backend/uv.lock` is the shared lockfile for every Python service liste
 below. Run `uv sync --all-packages` from within `backend/` (or `./scripts.sh sync` from the
 repo root) to install all of them into one environment.
 
+The shared [`packages/database`](packages/database) workspace package owns PostgreSQL
+configuration, model conventions, transactions, and the single Alembic migration history.
+From the repository root, run `./scripts.sh db migrate` to upgrade the configured database,
+`./scripts.sh db current` to verify its revision, or `./scripts.sh db test` for the isolated
+destructive lifecycle test. The test project is always removed afterward.
+
 | Service | Status |
 |---------|--------|
 | [ai-engine](services/ai-engine) | active |

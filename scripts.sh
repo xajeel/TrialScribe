@@ -15,6 +15,7 @@ Commands:
   test     Run every backend service test and the React test suite
   smoke    Start and health-check every platform boundary
   infra    Manage local infrastructure: up, check, down, or test
+  db       Manage PostgreSQL schema: migrate, current, or test
   help     Show this help
 
 Compatibility aliases:
@@ -35,6 +36,7 @@ ensure_env() {
     POSTGRES_PASSWORD
     POSTGRES_DB
     POSTGRES_PORT
+    DATABASE_URL
     REDIS_PASSWORD
     REDIS_PORT
     KAFKA_PORT
@@ -59,6 +61,58 @@ ensure_env() {
   done
 }
 
+run_database() {
+  local action="${1:-}"
+  local -a alembic_command=(
+    uv run
+    --frozen
+    --env-file "$repo_root/.env"
+    --package trialscribe-database
+    alembic
+    -c packages/database/alembic.ini
+  )
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-db-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/database.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    migrate)
+      (cd "$repo_root/backend" && "${alembic_command[@]}" upgrade head)
+      ;;
+    current)
+      (cd "$repo_root/backend" && "${alembic_command[@]}" current --check-heads)
+      ;;
+    test)
+      (
+        cd "$repo_root"
+        cleanup_database_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_database_test EXIT
+        cleanup_database_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres
+        python3 "$repo_root/scripts/check_database.py" \
+          --project-name trialscribe-db-test \
+          --compose-file docker-compose.yml \
+          --compose-file infra/testing/isolated.yml \
+          --compose-file infra/testing/database.yml
+      )
+      ;;
+    *)
+      echo "Unknown database action: ${action:-<missing>}" >&2
+      echo "Choose one of: migrate, current, test" >&2
+      return 1
+      ;;
+  esac
+}
+
 run_infrastructure() {
   local action="${1:-}"
   local -a dev_compose=(
@@ -72,7 +126,7 @@ run_infrastructure() {
     --env-file .env
     -p trialscribe-test
     -f docker-compose.yml
-    -f docker-compose.test.yml
+    -f infra/testing/isolated.yml
     --profile infrastructure
   )
 
@@ -106,7 +160,7 @@ run_infrastructure() {
         python3 "$repo_root/scripts/check_infrastructure.py" \
           --project-name trialscribe-test \
           --compose-file docker-compose.yml \
-          --compose-file docker-compose.test.yml \
+          --compose-file infra/testing/isolated.yml \
           --verify-restart-persistence
       )
       ;;
@@ -165,6 +219,7 @@ case "${1:-}" in
     (
       cd "$repo_root/backend"
       uv run ruff check \
+        packages/database \
         services/api-gateway \
         services/auth-service \
         services/user-service \
@@ -178,6 +233,7 @@ case "${1:-}" in
     (
       cd "$repo_root/backend"
       uv run pytest \
+        packages/database/tests \
         services/api-gateway/tests \
         services/auth-service/tests \
         services/user-service/tests \
@@ -191,6 +247,9 @@ case "${1:-}" in
     ;;
   infra)
     run_infrastructure "${2:-}"
+    ;;
+  db)
+    run_database "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)

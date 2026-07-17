@@ -3,19 +3,26 @@ name = "trialscribe-backend"
 version = "0.1.0"
 description = "TrialScribe backend — uv workspace root for all Python services"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["trialscribe-database"]
 
 [dependency-groups]
 dev = ["ruff>=0.4", "pytest>=8"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+markers = [
+    "integration: requires live external infrastructure",
+]
 
 [tool.uv.workspace]
 members = [
+    "packages/database",
     "services/api-gateway",
     "services/auth-service",
     "services/user-service",
     "services/ai-engine",
     "services/worker-service",
 ]
+
+[tool.uv.sources]
+trialscribe-database = { workspace = true }

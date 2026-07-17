@@ -1,0 +1,46 @@
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = PACKAGE_ROOT / "migrations"
+
+
+def migration_scripts() -> ScriptDirectory:
+    config = Config(PACKAGE_ROOT / "alembic.ini")
+    return ScriptDirectory.from_config(config)
+
+
+def test_migration_history_is_linear_with_one_head() -> None:
+    scripts = migration_scripts()
+    revisions = list(scripts.walk_revisions(base="base", head="heads"))
+
+    assert scripts.get_heads() == ["0002_create_trialscribe_schema"]
+    assert [revision.revision for revision in revisions] == [
+        "0002_create_trialscribe_schema",
+        "0001_enable_vector",
+    ]
+
+
+def test_every_revision_has_upgrade_and_downgrade_contracts() -> None:
+    for revision in migration_scripts().walk_revisions(base="base", head="heads"):
+        assert callable(revision.module.upgrade)
+        assert callable(revision.module.downgrade)
+
+
+def test_revision_files_stay_in_versions_directory() -> None:
+    assert list(MIGRATIONS.glob("[0-9]*.py")) == []
+    assert sorted(path.name for path in (MIGRATIONS / "versions").glob("*.py")) == [
+        "0001_enable_vector.py",
+        "0002_create_trialscribe_schema.py",
+    ]
+
+
+def test_migration_environment_uses_utc_and_model_comparisons() -> None:
+    environment_source = (MIGRATIONS / "env.py").read_text()
+
+    assert "SET TIME ZONE 'UTC'" in environment_source
+    assert "compare_type=True" in environment_source
+    assert "compare_server_default=True" in environment_source
+    assert "sqlalchemy.url" not in (PACKAGE_ROOT / "alembic.ini").read_text()
