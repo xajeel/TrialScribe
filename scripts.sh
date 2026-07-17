@@ -76,8 +76,8 @@ run_database() {
     --env-file .env
     -p trialscribe-db-test
     -f docker-compose.yml
-    -f docker-compose.test.yml
-    -f docker-compose.database-test.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/database.yml
     --profile infrastructure
   )
 
@@ -101,8 +101,8 @@ run_database() {
         python3 "$repo_root/scripts/check_database.py" \
           --project-name trialscribe-db-test \
           --compose-file docker-compose.yml \
-          --compose-file docker-compose.test.yml \
-          --compose-file docker-compose.database-test.yml
+          --compose-file infra/testing/isolated.yml \
+          --compose-file infra/testing/database.yml
       )
       ;;
     *)
@@ -126,7 +126,7 @@ run_infrastructure() {
     --env-file .env
     -p trialscribe-test
     -f docker-compose.yml
-    -f docker-compose.test.yml
+    -f infra/testing/isolated.yml
     --profile infrastructure
   )
 
@@ -160,7 +160,7 @@ run_infrastructure() {
         python3 "$repo_root/scripts/check_infrastructure.py" \
           --project-name trialscribe-test \
           --compose-file docker-compose.yml \
-          --compose-file docker-compose.test.yml \
+          --compose-file infra/testing/isolated.yml \
           --verify-restart-persistence
       )
       ;;
