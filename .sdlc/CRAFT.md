@@ -7,6 +7,7 @@ Source: derived from codebase · 2026-07-15
 - Pydantic 2.13.4 — use `model_validate()` and `model_dump()`; legacy `parse_obj()` and `dict()` forbidden
 - Streamlit 1.59.1
 - Node.js 24.18.0 LTS · npm 11.16.0 · React/React DOM 19.2.7 · TypeScript 7.0.2 · Vite 8.1.4 · Vitest 4.1.10 · `@vitejs/plugin-react` 6.0.3 · React types 19.2.17/19.2.3
+- PostgreSQL 18 + pgvector 0.8.2 · Redis 8.8.0 · Apache Kafka 4.3.1 in KRaft mode
 - pytest 9.1.1 · Ruff 0.15.21
 > New dependency → latest stable, exact version recorded here in the same task.
 
@@ -26,6 +27,7 @@ Source: derived from codebase · 2026-07-15
 - `backend/services/worker-service/trialscribe_worker/` → FastAPI worker health boundary; tests live in `backend/services/worker-service/tests/test_*.py`
 - `frontend/streamlit-ui/` → interim Streamlit UI; `frontend/web/` remains a separate planned frontend
 - `frontend/web/src/` → React application shell and colocated `*.test.tsx` unit tests
+- `infra/` → Docker Compose initialization assets for local infrastructure only
 - New files go in the directory matching their concern; never place application modules at repository root.
 
 ## Style

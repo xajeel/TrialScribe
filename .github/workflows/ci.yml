@@ -5,6 +5,15 @@ on:
   pull_request:
 
 jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test local infrastructure
+        run: ./scripts.sh infra test
+
   ai-engine:
     runs-on: ubuntu-latest
     env:
