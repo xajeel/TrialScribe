@@ -15,5 +15,7 @@ Python 3.12, FastAPI, LangGraph/LangChain, Pydantic, Streamlit, uv, Node.js, Rea
 - migrate: `./scripts.sh db migrate`
 - migration-status: `./scripts.sh db current`
 - database-test: `./scripts.sh db test`
+- authentication-keys: `./scripts.sh auth keys`
+- authentication-test: `./scripts.sh auth test`
 
 > Repos: single service-oriented monorepo; backend services are separate uv workspace packages, the React client is an npm project, and the interim Streamlit UI remains a standalone uv project.
