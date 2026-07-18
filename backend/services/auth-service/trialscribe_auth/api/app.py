@@ -2,6 +2,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
 
@@ -34,6 +37,21 @@ app: FastAPI = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(
+    _request: Request,
+    error: RequestValidationError,
+) -> JSONResponse:
+    safe_errors = [
+        {key: value for key, value in item.items() if key != "input"}
+        for item in error.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(safe_errors)},
+    )
 
 
 @app.get("/health/live", response_model=HealthResponse)

@@ -313,6 +313,30 @@ def test_refresh_replay_revokes_replacement_family(api_context: dict[str, Any]) 
     assert revoked_replacement.status_code == 401
 
 
+def test_inactive_account_cannot_refresh(api_context: dict[str, Any]) -> None:
+    client: TestClient = api_context["client"]
+    register_and_login(client)
+    csrf = client.cookies.get("trialscribe_csrf")
+    assert csrf
+    account = next(iter(api_context["state"].accounts.values()))
+    account.is_active = False
+
+    response = client.post(
+        "/v1/auth/refresh",
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication credentials"}
+    assert all(
+        session.revoked_at == NOW
+        for session in api_context["state"].sessions.values()
+    )
+    assert all(
+        "Max-Age=0" in value for value in response.headers.get_list("set-cookie")
+    )
+
+
 def test_current_logout_and_logout_all_have_distinct_scope(
     api_context: dict[str, Any],
 ) -> None:
@@ -382,6 +406,22 @@ def test_missing_csrf_rejects_and_clears_session_cookies(
     assert response.status_code == 401
     assert len(response.headers.get_list("set-cookie")) == 2
     assert all("Max-Age=0" in value for value in response.headers.get_list("set-cookie"))
+
+
+def test_registration_validation_never_echoes_password(
+    api_context: dict[str, Any],
+) -> None:
+    client: TestClient = api_context["client"]
+    submitted_password = "secret-that-must-not-be-echoed"
+
+    response = client.post(
+        "/v1/auth/register",
+        json={"password": submitted_password},
+    )
+
+    assert response.status_code == 422
+    assert submitted_password not in response.text
+    assert all("input" not in error for error in response.json()["detail"])
 
 
 class LifecycleRedis:

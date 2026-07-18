@@ -262,10 +262,11 @@ def smoke_backend(service: Service) -> None:
     if service.label == "ai":
         environment, redactions = ai_environment()
 
-    child = start_process(
-        [
-            "uv",
-            "run",
+    command = ["uv", "run"]
+    if service.label == "auth":
+        command.extend(("--env-file", str(REPO_ROOT / ".env")))
+    command.extend(
+        (
             "--package",
             service.package,
             "uvicorn",
@@ -274,7 +275,11 @@ def smoke_backend(service: Service) -> None:
             "127.0.0.1",
             "--port",
             str(port),
-        ],
+        )
+    )
+
+    child = start_process(
+        command,
         cwd=BACKEND_ROOT,
         env=environment,
         redactions=redactions,

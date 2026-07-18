@@ -209,17 +209,26 @@ async def refresh(
     if not refresh_token or not csrf_cookie or not csrf_header:
         return _rejected_cookie_response(settings)
     async with database.transaction() as session:
-        result = await SessionService(
-            SessionRepository(session),
-            settings,
-        ).rotate_session(refresh_token, csrf_cookie, csrf_header, now)
-    if result.credentials is None:
+        session_service = SessionService(SessionRepository(session), settings)
+        result = await session_service.rotate_session(
+            refresh_token,
+            csrf_cookie,
+            csrf_header,
+            now,
+        )
+        credentials = result.credentials
+        if credentials is not None:
+            account = await AccountRepository(session).get_by_id(credentials.account_id)
+            if account is None or not account.is_active:
+                await session_service.revoke_all(credentials.account_id, now)
+                credentials = None
+    if credentials is None:
         return _rejected_cookie_response(settings)
 
     response = JSONResponse(
-        content=_token_response(codec, result.credentials, settings, now).model_dump()
+        content=_token_response(codec, credentials, settings, now).model_dump()
     )
-    _set_session_cookies(response, result.credentials, settings, now)
+    _set_session_cookies(response, credentials, settings, now)
     return response
 
 
