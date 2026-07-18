@@ -8,7 +8,8 @@ The repository is a service-oriented monorepo. Gateway, authentication, user, AI
 and React boundaries can be run and verified independently before later features add their
 domain behavior.
 
-See [docs/architecture.md](docs/architecture.md) for the full system design and roadmap.
+See [docs/architecture.md](docs/architecture.md) for the full system design and roadmap, and
+[docs/auth-service.md](docs/auth-service.md) for the authentication and session flow.
 
 ## Quickstart
 
@@ -21,6 +22,7 @@ then run:
 ./scripts.sh infra up
 ./scripts.sh infra check
 ./scripts.sh db migrate
+./scripts.sh auth keys
 ./scripts.sh lint
 ./scripts.sh test
 ./scripts.sh smoke
@@ -60,6 +62,8 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Migrate PostgreSQL to current | `./scripts.sh db migrate` |
 | Check PostgreSQL revision | `./scripts.sh db current` |
 | Test isolated database lifecycle | `./scripts.sh db test` |
+| Generate local authentication keys | `./scripts.sh auth keys` |
+| Test isolated authentication lifecycle | `./scripts.sh auth test` |
 | Show command help | `./scripts.sh help` |
 
 The existing `sync`, `api`, `ui`, and `up` commands remain compatibility aliases. `api` now
@@ -95,6 +99,25 @@ Neither command prints the connection URL or password.
 project. It starts a fresh PostgreSQL volume on a Docker-assigned loopback port, tests empty
 and previous-revision upgrades, transaction rollback, organization scope, pgvector, and
 restart persistence, then always removes its containers, network, and volume.
+
+## Local authentication
+
+Run `./scripts.sh auth keys` once to fill empty Ed25519 signing-key and HMAC-secret
+placeholders in `.env` without printing or replacing existing values. After infrastructure is
+healthy and `./scripts.sh db migrate` has run, start the service with `./scripts.sh run auth`.
+
+Individuals can register at `POST /v1/auth/register` and log in at `POST /v1/auth/login`.
+The access token is returned in JSON; the refresh token is restricted to an HttpOnly,
+SameSite cookie. Browser calls to refresh or current-session logout must copy the readable
+`trialscribe_csrf` cookie into the `X-CSRF-Token` header. Organization invitation and
+membership behavior belongs to the next organization-RBAC feature and will reuse these global
+accounts.
+
+`./scripts.sh auth test` is destructive only to the isolated `trialscribe-auth-test` project.
+It migrates a fresh database, proves registration, login, token rotation/replay rejection,
+logout scopes, throttling, and persistence across PostgreSQL/Redis restarts, then removes all
+test containers and volumes. Production deployments require HTTPS, `AUTH_COOKIE_SECURE=true`,
+and externally managed non-placeholder keys and secrets.
 
 ## Repository layout
 

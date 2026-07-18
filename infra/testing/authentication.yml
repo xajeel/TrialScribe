@@ -1,0 +1,9 @@
+# Publish only authentication dependencies on Docker-assigned loopback ports.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1::5432"
+
+  redis:
+    ports:
+      - "127.0.0.1::6379"

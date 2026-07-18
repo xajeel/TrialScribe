@@ -16,6 +16,7 @@ Commands:
   smoke    Start and health-check every platform boundary
   infra    Manage local infrastructure: up, check, down, or test
   db       Manage PostgreSQL schema: migrate, current, or test
+  auth     Manage authentication: keys or test
   help     Show this help
 
 Compatibility aliases:
@@ -39,7 +40,18 @@ ensure_env() {
     DATABASE_URL
     REDIS_PASSWORD
     REDIS_PORT
+    REDIS_URL
     KAFKA_PORT
+    AUTH_JWT_PRIVATE_KEY_B64
+    AUTH_JWT_PUBLIC_KEY_B64
+    AUTH_JWT_ISSUER
+    AUTH_JWT_AUDIENCE
+    AUTH_ACCESS_TOKEN_TTL_SECONDS
+    AUTH_REFRESH_TOKEN_TTL_SECONDS
+    AUTH_COOKIE_SECURE
+    AUTH_HMAC_SECRET
+    AUTH_LOGIN_ATTEMPT_LIMIT
+    AUTH_LOGIN_WINDOW_SECONDS
   )
 
   if [[ ! -e "$env_file" ]]; then
@@ -59,6 +71,107 @@ ensure_env() {
     fi
     printf '%s\n' "$template_line" >> "$env_file"
   done
+}
+
+replace_empty_env_value() {
+  local key="$1"
+  local value="$2"
+  local env_file="$repo_root/.env"
+  local temp_file
+  temp_file="$(mktemp)"
+  awk -v target="$key" -v replacement="$value" '
+    $0 == target "=" { print target "=" replacement; next }
+    { print }
+  ' "$env_file" > "$temp_file"
+  chmod --reference="$env_file" "$temp_file"
+  mv "$temp_file" "$env_file"
+}
+
+run_authentication() {
+  local action="${1:-}"
+  local private_key
+  local public_key
+  local hmac_secret
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-auth-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/authentication.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    keys)
+      private_key="$(grep -m 1 '^AUTH_JWT_PRIVATE_KEY_B64=' "$repo_root/.env" | cut -d= -f2-)"
+      public_key="$(grep -m 1 '^AUTH_JWT_PUBLIC_KEY_B64=' "$repo_root/.env" | cut -d= -f2-)"
+      if [[ -n "$private_key" || -n "$public_key" ]]; then
+        if [[ -z "$private_key" || -z "$public_key" ]]; then
+          echo "Both authentication signing keys must be empty or populated." >&2
+          return 1
+        fi
+      else
+        mapfile -t generated_keys < <(
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-auth python - <<'PY'
+import base64
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+private_key = Ed25519PrivateKey.generate()
+print(base64.b64encode(private_key.private_bytes(
+    serialization.Encoding.Raw,
+    serialization.PrivateFormat.Raw,
+    serialization.NoEncryption(),
+)).decode())
+print(base64.b64encode(private_key.public_key().public_bytes(
+    serialization.Encoding.Raw,
+    serialization.PublicFormat.Raw,
+)).decode())
+PY
+        )
+        replace_empty_env_value AUTH_JWT_PRIVATE_KEY_B64 "${generated_keys[0]}"
+        replace_empty_env_value AUTH_JWT_PUBLIC_KEY_B64 "${generated_keys[1]}"
+      fi
+      hmac_secret="$(grep -m 1 '^AUTH_HMAC_SECRET=' "$repo_root/.env" | cut -d= -f2-)"
+      if [[ -z "$hmac_secret" ]]; then
+        hmac_secret="$(
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-auth python -c \
+            'import secrets; print(secrets.token_urlsafe(48))'
+        )"
+        replace_empty_env_value AUTH_HMAC_SECRET "$hmac_secret"
+      fi
+      echo "Authentication signing and HMAC keys are configured in .env."
+      ;;
+    test)
+      (
+        cd "$repo_root"
+        cleanup_authentication_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_authentication_test EXIT
+        cleanup_authentication_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-auth \
+            python "$repo_root/scripts/check_authentication.py" \
+              --project-name trialscribe-auth-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/authentication.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown authentication action: ${action:-<missing>}" >&2
+      echo "Choose one of: keys, test" >&2
+      return 1
+      ;;
+  esac
 }
 
 run_database() {
@@ -178,7 +291,8 @@ run_service() {
       (cd "$repo_root/backend" && uv run --package trialscribe-gateway uvicorn trialscribe_gateway.api.app:app --host 0.0.0.0 --port "${GATEWAY_PORT:-8000}")
       ;;
     auth)
-      (cd "$repo_root/backend" && uv run --package trialscribe-auth uvicorn trialscribe_auth.api.app:app --host 0.0.0.0 --port "${AUTH_PORT:-8001}")
+      ensure_env
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-auth uvicorn trialscribe_auth.api.app:app --host 0.0.0.0 --port "${AUTH_PORT:-8001}")
       ;;
     user)
       (cd "$repo_root/backend" && uv run --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port "${USER_PORT:-8002}")
@@ -250,6 +364,9 @@ case "${1:-}" in
     ;;
   db)
     run_database "${2:-}"
+    ;;
+  auth)
+    run_authentication "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)
