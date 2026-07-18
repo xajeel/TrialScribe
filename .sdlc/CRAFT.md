@@ -17,7 +17,7 @@ Source: derived from codebase · 2026-07-15
 - `backend/packages/database/trialscribe_db/` → shared PostgreSQL configuration, model conventions, migrations, and async transaction runtime; tests live in `backend/packages/database/tests/test_*.py`
 - `backend/services/api-gateway/trialscribe_gateway/` → FastAPI gateway boundary; tests live in `backend/services/api-gateway/tests/test_*.py`
 - `backend/services/auth-service/trialscribe_auth/` → FastAPI authentication boundary; `api/` owns HTTP wiring, `models/` persistence, `repositories/` database access, `services/` use cases, `security/` credential/token primitives, and `schemas/` request/response contracts; tests live in `backend/services/auth-service/tests/test_*.py`
-- `backend/services/user-service/trialscribe_user/` → FastAPI user boundary; tests live in `backend/services/user-service/tests/test_*.py`
+- `backend/services/user-service/trialscribe_user/` → FastAPI organization boundary; `api/` owns HTTP wiring, `models/` persistence, `repositories/` database access, `services/` organization/RBAC use cases, `security/` public token and invitation primitives, and `schemas/` request/response contracts; tests live in `backend/services/user-service/tests/test_*.py`
 - `backend/services/ai-engine/trialscribe_ai/api/` → FastAPI application and session boundaries
 - `backend/services/ai-engine/trialscribe_ai/agents/` → LangGraph nodes and graph assembly
 - `backend/services/ai-engine/trialscribe_ai/models/` → Pydantic domain and state models
@@ -49,6 +49,7 @@ Source: derived from codebase · 2026-07-15
 - AI provider and workflow settings are read from environment variables in `backend/services/ai-engine/trialscribe_ai/config/settings.py`.
 - Shared database settings are read from environment variables in `backend/packages/database/trialscribe_db/config.py`.
 - Authentication settings are read from environment variables in `backend/services/auth-service/trialscribe_auth/config.py`.
+- User and organization settings are read from environment variables in `backend/services/user-service/trialscribe_user/config.py`; this boundary receives only the authentication public verification key.
 - All settings modules read environment variables; `DATABASE_URL`, `REDIS_URL`, private signing keys, and authentication HMAC secrets are secret-backed and remain redacted in representations and errors.
 - Every new key → `.env_example` with a placeholder in the same task.
 - Never hardcode secrets, external service credentials, or deployment URLs in source.
@@ -62,6 +63,7 @@ Source: derived from codebase · 2026-07-15
 - Passwords use Argon2id hashes and are never stored, logged, or returned in plaintext; unknown-account login performs a dummy password verification.
 - Access tokens use Ed25519 signatures, an explicit algorithm allow-list, required issuer/audience/time/type claims, and short expiry.
 - Refresh tokens are opaque, hash-only at rest, rotated once, and revoked as a family on replay; browser refresh actions require CSRF validation.
+- Organization permissions are denied by default and loaded from current memberships for every protected request; invitation tokens are random, hash-only at rest, single-use, and time-limited.
 
 ## Boundaries
 - Services never import another service's application package; each boundary owns its runtime contracts and release lifecycle.

@@ -8,8 +8,9 @@ The repository is a service-oriented monorepo. Gateway, authentication, user, AI
 and React boundaries can be run and verified independently before later features add their
 domain behavior.
 
-See [docs/architecture.md](docs/architecture.md) for the full system design and roadmap, and
-[docs/auth-service.md](docs/auth-service.md) for the authentication and session flow.
+See [docs/architecture.md](docs/architecture.md) for the full system design and roadmap,
+[docs/auth-service.md](docs/auth-service.md) for authentication, and
+[docs/organization-rbac.md](docs/organization-rbac.md) for organization access.
 
 ## Quickstart
 
@@ -64,6 +65,7 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Test isolated database lifecycle | `./scripts.sh db test` |
 | Generate local authentication keys | `./scripts.sh auth keys` |
 | Test isolated authentication lifecycle | `./scripts.sh auth test` |
+| Test isolated organization RBAC lifecycle | `./scripts.sh user test` |
 | Show command help | `./scripts.sh help` |
 
 The existing `sync`, `api`, `ui`, and `up` commands remain compatibility aliases. `api` now
@@ -109,15 +111,27 @@ healthy and `./scripts.sh db migrate` has run, start the service with `./scripts
 Individuals can register at `POST /v1/auth/register` and log in at `POST /v1/auth/login`.
 The access token is returned in JSON; the refresh token is restricted to an HttpOnly,
 SameSite cookie. Browser calls to refresh or current-session logout must copy the readable
-`trialscribe_csrf` cookie into the `X-CSRF-Token` header. Organization invitation and
-membership behavior belongs to the next organization-RBAC feature and will reuse these global
-accounts.
+`trialscribe_csrf` cookie into the `X-CSRF-Token` header. The user service reuses the signed
+global account ID while loading organization roles from PostgreSQL on every protected call.
 
 `./scripts.sh auth test` is destructive only to the isolated `trialscribe-auth-test` project.
 It migrates a fresh database, proves registration, login, token rotation/replay rejection,
 logout scopes, throttling, and persistence across PostgreSQL/Redis restarts, then removes all
 test containers and volumes. Production deployments require HTTPS, `AUTH_COOKIE_SECURE=true`,
 and externally managed non-placeholder keys and secrets.
+
+## Local organizations and RBAC
+
+Login never asks whether a person is an individual or an organization. An authenticated
+account may remain organization-free, create an organization and become its owner, or accept
+a one-time invitation link. Start infrastructure, migrate the database, generate auth keys,
+then run the user boundary with `./scripts.sh run user`; its OpenAPI UI is available at
+`http://localhost:8002/docs`.
+
+Roles are `owner`, `admin`, and `member`. Owners manage every membership and invite admins or
+members; admins manage member access; members can read their organization and member list.
+The last owner cannot be removed or demoted. `./scripts.sh user test` verifies this lifecycle
+against an isolated PostgreSQL project and deletes that project's containers and volume.
 
 ## Repository layout
 

@@ -17,6 +17,7 @@ Commands:
   infra    Manage local infrastructure: up, check, down, or test
   db       Manage PostgreSQL schema: migrate, current, or test
   auth     Manage authentication: keys or test
+  user     Manage organization RBAC: test
   help     Show this help
 
 Compatibility aliases:
@@ -52,6 +53,8 @@ ensure_env() {
     AUTH_HMAC_SECRET
     AUTH_LOGIN_ATTEMPT_LIMIT
     AUTH_LOGIN_WINDOW_SECONDS
+    USER_INVITATION_TTL_SECONDS
+    USER_INVITATION_ACCEPT_URL
   )
 
   if [[ ! -e "$env_file" ]]; then
@@ -71,6 +74,48 @@ ensure_env() {
     fi
     printf '%s\n' "$template_line" >> "$env_file"
   done
+}
+
+run_user_service() {
+  local action="${1:-}"
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-user-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/organization-rbac.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    test)
+      (
+        cd "$repo_root"
+        cleanup_user_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_user_test EXIT
+        cleanup_user_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-user \
+            python "$repo_root/scripts/check_organization_rbac.py" \
+              --project-name trialscribe-user-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/organization-rbac.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown user action: ${action:-<missing>}" >&2
+      echo "Choose: test" >&2
+      return 1
+      ;;
+  esac
 }
 
 replace_empty_env_value() {
@@ -295,7 +340,8 @@ run_service() {
       (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-auth uvicorn trialscribe_auth.api.app:app --host 0.0.0.0 --port "${AUTH_PORT:-8001}")
       ;;
     user)
-      (cd "$repo_root/backend" && uv run --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port "${USER_PORT:-8002}")
+      ensure_env
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port "${USER_PORT:-8002}")
       ;;
     ai)
       (cd "$repo_root/backend" && uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --host 0.0.0.0 --port "${AI_PORT:-8003}")
@@ -367,6 +413,9 @@ case "${1:-}" in
     ;;
   auth)
     run_authentication "${2:-}"
+    ;;
+  user)
+    run_user_service "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)
