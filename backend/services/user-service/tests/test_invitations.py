@@ -236,10 +236,11 @@ def test_existing_member_is_rejected_before_an_invitation_is_created() -> None:
 
 
 def test_acceptance_creates_exact_role_and_replay_is_rejected() -> None:
-    service, _, memberships = service_with(
+    service, invitations, memberships = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER)]
     )
     invitation, _, token = create_invite(service, role=MembershipRole.ADMIN)
+    invitations.accounts_by_email[invitation.email] = NEW_ACCOUNT_ID
 
     accepted = asyncio.run(service.accept_invitation(token, NEW_ACCOUNT_ID, NOW))
 
@@ -250,6 +251,22 @@ def test_acceptance_creates_exact_role_and_replay_is_rejected() -> None:
         asyncio.run(service.accept_invitation(token, MEMBER_ID, NOW))
     with pytest.raises(InvalidInvitationError, match="Invalid organization invitation"):
         asyncio.run(service.accept_invitation(f"{token}x", MEMBER_ID, NOW))
+
+
+def test_forwarded_token_cannot_be_accepted_by_another_account() -> None:
+    service, invitations, memberships = service_with(
+        [membership(OWNER_ID, MembershipRole.OWNER)]
+    )
+    invitation, _, token = create_invite(service)
+    invitations.accounts_by_email[invitation.email] = NEW_ACCOUNT_ID
+
+    with pytest.raises(InvalidInvitationError, match="Invalid organization invitation"):
+        asyncio.run(service.accept_invitation(token, MEMBER_ID, NOW))
+
+    assert invitation.accepted_at is None
+    assert all(item.account_id != MEMBER_ID for item in memberships.memberships)
+    accepted = asyncio.run(service.accept_invitation(token, NEW_ACCOUNT_ID, NOW))
+    assert accepted.account_id == NEW_ACCOUNT_ID
 
 
 def test_expired_and_revoked_invitations_share_safe_rejection() -> None:
@@ -285,10 +302,11 @@ def test_expired_and_revoked_invitations_share_safe_rejection() -> None:
 
 def test_existing_membership_race_never_changes_access() -> None:
     existing = membership(NEW_ACCOUNT_ID, MembershipRole.MEMBER)
-    service, _, memberships = service_with(
+    service, invitations, memberships = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER), existing]
     )
-    _, _, token = create_invite(service)
+    invitation, _, token = create_invite(service)
+    invitations.accounts_by_email[invitation.email] = NEW_ACCOUNT_ID
 
     with pytest.raises(InvitationConflictError, match="already belongs"):
         asyncio.run(service.accept_invitation(token, NEW_ACCOUNT_ID, NOW))

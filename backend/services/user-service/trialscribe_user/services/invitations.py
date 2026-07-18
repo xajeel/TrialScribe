@@ -183,6 +183,11 @@ class InvitationService:
             or invitation.expires_at <= accepted_at
         ):
             raise InvalidInvitationError("Invalid organization invitation")
+        invited_account_id = await self._invitations.find_account_id_by_email(
+            invitation.email
+        )
+        if invited_account_id != account_id:
+            raise InvalidInvitationError("Invalid organization invitation")
         if await self._memberships.get(invitation.organization_id, account_id) is not None:
             raise InvitationConflictError("Account already belongs to organization")
         membership = Membership(
