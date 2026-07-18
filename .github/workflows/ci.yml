@@ -6,6 +6,24 @@ on:
       - staging
 
 jobs:
+  organization-rbac:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.10.7"
+
+      - name: Install frozen backend workspace
+        working-directory: backend
+        run: uv sync --frozen --all-packages
+
+      - name: Test organization RBAC lifecycle
+        run: ./scripts.sh user test
+
   authentication:
     runs-on: ubuntu-latest
     timeout-minutes: 15

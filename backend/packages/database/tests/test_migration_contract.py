@@ -16,8 +16,9 @@ def test_migration_history_is_linear_with_one_head() -> None:
     scripts = migration_scripts()
     revisions = list(scripts.walk_revisions(base="base", head="heads"))
 
-    assert scripts.get_heads() == ["0003_auth_tables"]
+    assert scripts.get_heads() == ["0004_organization_rbac"]
     assert [revision.revision for revision in revisions] == [
+        "0004_organization_rbac",
         "0003_auth_tables",
         "0002_create_trialscribe_schema",
         "0001_enable_vector",
@@ -36,6 +37,7 @@ def test_revision_files_stay_in_versions_directory() -> None:
         "0001_enable_vector.py",
         "0002_create_trialscribe_schema.py",
         "0003_create_authentication_tables.py",
+        "0004_create_organization_rbac_tables.py",
     ]
 
 

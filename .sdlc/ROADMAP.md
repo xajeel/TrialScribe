@@ -6,7 +6,7 @@
 | 2 | local-runtime-infrastructure | 1 | done |
 | 3 | postgres-data-foundation | 2 | done |
 | 4 | user-authentication | 3 | done |
-| 5 | organization-rbac | 4 | todo |
+| 5 | organization-rbac | 4 | done |
 | 6 | api-gateway | 2, 4, 5 | todo |
 | 7 | conversation-workspaces | 3, 5, 6 | todo |
 | 8 | document-ingestion | 3, 5, 7 | todo |
