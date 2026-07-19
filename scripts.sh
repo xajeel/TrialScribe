@@ -18,6 +18,7 @@ Commands:
   db       Manage PostgreSQL schema: migrate, current, or test
   auth     Manage authentication: keys or test
   user     Manage organization RBAC: test
+  ai       Manage AI Engine conversation workspaces: test
   help     Show this help
 
 Compatibility aliases:
@@ -121,6 +122,48 @@ run_user_service() {
       ;;
     *)
       echo "Unknown user action: ${action:-<missing>}" >&2
+      echo "Choose: test" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_ai_engine() {
+  local action="${1:-}"
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-ai-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/conversation-workspaces.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    test)
+      (
+        cd "$repo_root"
+        cleanup_ai_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_ai_test EXIT
+        cleanup_ai_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-ai \
+            python "$repo_root/scripts/check_conversation_workspaces.py" \
+              --project-name trialscribe-ai-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/conversation-workspaces.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown ai action: ${action:-<missing>}" >&2
       echo "Choose: test" >&2
       return 1
       ;;
@@ -427,6 +470,9 @@ case "${1:-}" in
     ;;
   user)
     run_user_service "${2:-}"
+    ;;
+  ai)
+    run_ai_engine "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)
