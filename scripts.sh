@@ -43,6 +43,15 @@ ensure_env() {
     REDIS_PORT
     REDIS_URL
     KAFKA_PORT
+    GATEWAY_AUTH_SERVICE_URL
+    GATEWAY_USER_SERVICE_URL
+    GATEWAY_AI_SERVICE_URL
+    GATEWAY_WORKER_SERVICE_URL
+    GATEWAY_CORS_ORIGINS
+    GATEWAY_UPSTREAM_CONNECT_TIMEOUT_SECONDS
+    GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS
+    GATEWAY_UPSTREAM_WRITE_TIMEOUT_SECONDS
+    GATEWAY_UPSTREAM_POOL_TIMEOUT_SECONDS
     AUTH_JWT_PRIVATE_KEY_B64
     AUTH_JWT_PUBLIC_KEY_B64
     AUTH_JWT_ISSUER
@@ -333,7 +342,8 @@ run_infrastructure() {
 run_service() {
   case "${1:-}" in
     gateway)
-      (cd "$repo_root/backend" && uv run --package trialscribe-gateway uvicorn trialscribe_gateway.api.app:app --host 0.0.0.0 --port "${GATEWAY_PORT:-8000}")
+      ensure_env
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-gateway uvicorn trialscribe_gateway.api.app:app --host 0.0.0.0 --port "${GATEWAY_PORT:-8000}")
       ;;
     auth)
       ensure_env
@@ -403,6 +413,7 @@ case "${1:-}" in
     (cd "$repo_root/frontend/web" && npm test)
     ;;
   smoke)
+    ensure_env
     python3 "$repo_root/scripts/smoke_platform.py"
     ;;
   infra)

@@ -1,1 +1,10 @@
-"""API-gateway enums live here when the service introduces them."""
+"""API-gateway enums."""
+
+from enum import StrEnum
+
+
+class ProxyTarget(StrEnum):
+    AUTH = "auth"
+    USER = "user"
+    AI = "ai"
+    WORKER = "worker"

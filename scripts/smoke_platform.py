@@ -263,7 +263,7 @@ def smoke_backend(service: Service) -> None:
         environment, redactions = ai_environment()
 
     command = ["uv", "run"]
-    if service.label == "auth":
+    if service.label in {"gateway", "auth", "user"}:
         command.extend(("--env-file", str(REPO_ROOT / ".env")))
     command.extend(
         (
