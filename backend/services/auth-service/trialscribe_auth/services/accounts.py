@@ -3,16 +3,12 @@
 from email_validator import EmailNotValidError, validate_email
 
 from trialscribe_auth.models.account import Account
-from trialscribe_auth.repositories.accounts import AccountRepository, DuplicateAccountError
+from trialscribe_auth.repositories.accounts import (
+    AccountRepository,
+    DuplicateAccountError,
+)
 from trialscribe_auth.security.passwords import hash_password
-
-
-class InvalidAccountInput(ValueError):
-    """Registration input does not meet the public account contract."""
-
-
-class AccountConflictError(RuntimeError):
-    """An account cannot be created for the supplied identity."""
+from trialscribe_auth.utils.exceptions import AccountConflictError, InvalidAccountInput
 
 
 def normalize_email(email: str) -> str:

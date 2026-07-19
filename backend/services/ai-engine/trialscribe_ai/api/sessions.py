@@ -1,20 +1,22 @@
-from fastapi import HTTPException
 from pydantic import BaseModel
 from uuid import uuid4
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Any
 
 from trialscribe_ai.storage.evidence_db import EvidenceDatabase
 from trialscribe_ai.agents.graph import graph_builder
-
-# In-memory session storage
-ACTIVE_SESSIONS = {}
-SESSION_TIMEOUT = timedelta(hours=2)
+from trialscribe_ai.utils.constant import (
+    SESSION_CLEANUP_INTERVAL_SECONDS,
+    SESSION_TIMEOUT,
+)
+from trialscribe_ai.utils.exceptions import SessionExpiredError, SessionNotFoundError
 
 
 class SessionResponse(BaseModel):
     session_id: str
     message: str
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -22,8 +24,8 @@ class QueryRequest(BaseModel):
 
 # Session management
 class SessionManager:
-    def __init__(self):
-        self.sessions = ACTIVE_SESSIONS
+    def __init__(self) -> None:
+        self.sessions: dict[str, dict[str, Any]] = {}
 
     def create_session(self) -> str:
         session_id = str(uuid4())
@@ -33,23 +35,28 @@ class SessionManager:
             "agent": graph_builder(),
             "summary": None,
             "documents": [],
-            "reports": {}
+            "reports": {},
         }
         return session_id
 
-    def get_session(self, session_id: str):
+    def get_session(self, session_id: str) -> dict[str, Any]:
         if session_id not in self.sessions:
-            raise HTTPException(status_code=404, detail="Session not found")
+            raise SessionNotFoundError
 
         session = self.sessions[session_id]
 
         if datetime.now() - session["created_at"] > SESSION_TIMEOUT:
             del self.sessions[session_id]
-            raise HTTPException(status_code=404, detail="Session expired")
+            raise SessionExpiredError
 
         return session
 
-    def cleanup_expired_sessions(self):
+    def delete_session(self, session_id: str) -> None:
+        if session_id not in self.sessions:
+            raise SessionNotFoundError
+        del self.sessions[session_id]
+
+    def cleanup_expired_sessions(self) -> None:
         expired_sessions = []
         for session_id, session in self.sessions.items():
             if datetime.now() - session["created_at"] > SESSION_TIMEOUT:
@@ -58,14 +65,17 @@ class SessionManager:
         for session_id in expired_sessions:
             del self.sessions[session_id]
 
+
 session_manager = SessionManager()
 
+
 # get session
-def get_session(session_id: str):
+def get_session(session_id: str) -> dict[str, Any]:
     return session_manager.get_session(session_id)
 
+
 # Background task for session cleanup
-async def cleanup_sessions():
+async def cleanup_sessions() -> None:
     while True:
         session_manager.cleanup_expired_sessions()
-        await asyncio.sleep(3600)  # Run every hour
+        await asyncio.sleep(SESSION_CLEANUP_INTERVAL_SECONDS)

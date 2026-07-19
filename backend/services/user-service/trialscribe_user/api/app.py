@@ -13,6 +13,14 @@ from trialscribe_db.runtime import create_database_runtime
 from trialscribe_user.api.routes import router as organization_router
 from trialscribe_user.config import UserSettings
 from trialscribe_user.models.health import HealthResponse
+from trialscribe_user.utils.constant import (
+    APP_TITLE,
+    APP_VERSION,
+    LIVENESS_STATUS,
+    READINESS_STATUS,
+    SERVICE_NAME,
+    SERVICE_UNAVAILABLE_DETAIL,
+)
 
 
 @asynccontextmanager
@@ -26,8 +34,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 app: FastAPI = FastAPI(
-    title="TrialScribe User",
-    version="0.1.0",
+    title=APP_TITLE,
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.include_router(organization_router)
@@ -50,7 +58,11 @@ async def request_validation_error(
 
 @app.get("/health/live", response_model=HealthResponse)
 async def liveness() -> HealthResponse:
-    return HealthResponse(status="ok", service="user-service", version=app.version)
+    return HealthResponse(
+        status=LIVENESS_STATUS,
+        service=SERVICE_NAME,
+        version=app.version,
+    )
 
 
 @app.get("/health/ready", response_model=HealthResponse)
@@ -59,9 +71,12 @@ async def readiness(request: Request) -> HealthResponse:
         async with request.app.state.database_runtime.transaction() as session:
             await session.execute(text("SELECT 1"))
     except Exception:
-        raise HTTPException(status_code=503, detail="Service unavailable") from None
+        raise HTTPException(
+            status_code=503,
+            detail=SERVICE_UNAVAILABLE_DETAIL,
+        ) from None
     return HealthResponse(
-        status="ready",
-        service="user-service",
+        status=READINESS_STATUS,
+        service=SERVICE_NAME,
         version=request.app.version,
     )

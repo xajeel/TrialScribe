@@ -1,18 +1,12 @@
 """Persistent organization memberships and roles."""
 
-from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from trialscribe_db.base import Base, TimestampMixin, UuidPrimaryKeyMixin
-
-
-class MembershipRole(StrEnum):
-    OWNER = "owner"
-    ADMIN = "admin"
-    MEMBER = "member"
+from trialscribe_user.utils.enum import MembershipRole as MembershipRole
 
 
 class Membership(UuidPrimaryKeyMixin, TimestampMixin, Base):

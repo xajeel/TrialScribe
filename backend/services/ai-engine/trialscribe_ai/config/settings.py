@@ -1,12 +1,27 @@
-from pathlib import Path
-from dotenv import load_dotenv
+"""Compatibility exports for AI-engine runtime settings."""
+
 import os
+
+from dotenv import load_dotenv
+
+from trialscribe_ai.utils.constant import (
+    ALLOWED_WEBSITES_FILE,
+    CONFIG_DIR,
+    DEFAULT_K_VALUE,
+    DEFAULT_MAX_RESULTS,
+    DEFAULT_NUM_WORDS,
+)
 
 load_dotenv()
 
-CONFIG_DIR = Path(__file__).resolve().parent
-ALLOWED_WEBSITES_FILE = CONFIG_DIR / "allowed_websites.yml"
+MAX_RESULTS = int(os.getenv("MAX_RESULTS", str(DEFAULT_MAX_RESULTS)))
+K_VALUE = int(os.getenv("K_value", str(DEFAULT_K_VALUE)))
+NUM_WORDS = int(os.getenv("NUM_WORDS", str(DEFAULT_NUM_WORDS)))
 
-MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
-K_VALUE = int(os.getenv("K_value", "10"))
-NUM_WORDS = int(os.getenv("NUM_WORDS", "500"))
+__all__ = [
+    "ALLOWED_WEBSITES_FILE",
+    "CONFIG_DIR",
+    "K_VALUE",
+    "MAX_RESULTS",
+    "NUM_WORDS",
+]

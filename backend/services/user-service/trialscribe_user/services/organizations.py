@@ -12,14 +12,10 @@ from trialscribe_user.services.authorization import (
     OrganizationNotFoundError,
     PermissionDeniedError,
 )
-
-
-class InvalidOrganizationInput(ValueError):
-    """Organization input does not meet the public contract."""
-
-
-class MembershipConflictError(RuntimeError):
-    """A membership change would violate organization continuity."""
+from trialscribe_user.utils.exceptions import (
+    InvalidOrganizationInput,
+    MembershipConflictError,
+)
 
 
 class OrganizationService:
@@ -41,7 +37,9 @@ class OrganizationService:
     ) -> tuple[Organization, Membership]:
         normalized_name = name.strip()
         if not 1 <= len(normalized_name) <= 120:
-            raise InvalidOrganizationInput("Organization name must be 1 to 120 characters")
+            raise InvalidOrganizationInput(
+                "Organization name must be 1 to 120 characters"
+            )
         organization = await self._organizations.add(Organization(name=normalized_name))
         membership = await self._memberships.add(
             Membership(
@@ -103,7 +101,10 @@ class OrganizationService:
             raise OrganizationNotFoundError("Organization membership not found")
         if not self._authorization.allows(actor.role, OrganizationAction.CHANGE_ROLES):
             raise PermissionDeniedError("Organization permission denied")
-        if target.role == MembershipRole.OWNER.value and new_role is not MembershipRole.OWNER:
+        if (
+            target.role == MembershipRole.OWNER.value
+            and new_role is not MembershipRole.OWNER
+        ):
             self._require_another_owner(memberships, target.account_id)
         return await self._memberships.update_role(target, new_role)
 
@@ -135,7 +136,11 @@ class OrganizationService:
         account_id: UUID,
     ) -> Membership | None:
         return next(
-            (membership for membership in memberships if membership.account_id == account_id),
+            (
+                membership
+                for membership in memberships
+                if membership.account_id == account_id
+            ),
             None,
         )
 

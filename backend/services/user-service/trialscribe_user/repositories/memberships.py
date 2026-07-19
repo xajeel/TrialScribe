@@ -7,10 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_user.models.membership import Membership, MembershipRole
-
-
-class DuplicateMembershipError(RuntimeError):
-    """An account already belongs to an organization."""
+from trialscribe_user.utils.exceptions import DuplicateMembershipError
 
 
 class MembershipRepository:
@@ -24,7 +21,9 @@ class MembershipRepository:
         try:
             await self._session.flush()
         except IntegrityError:
-            raise DuplicateMembershipError("Account already belongs to organization") from None
+            raise DuplicateMembershipError(
+                "Account already belongs to organization"
+            ) from None
         return membership
 
     async def get(

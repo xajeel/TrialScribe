@@ -1,6 +1,9 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from collections.abc import AsyncIterator
+from typing import Any
+
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from fastapi.responses import JSONResponse
 import json
 import tempfile
 import shutil
@@ -19,23 +22,52 @@ from trialscribe_ai.api.sessions import (
     cleanup_sessions,
     SessionResponse,
     QueryRequest,
-    ACTIVE_SESSIONS,
+)
+from trialscribe_ai.utils.constant import (
+    APP_DESCRIPTION,
+    APP_TITLE,
+    APP_VERSION,
+    DOCUMENT_UPLOAD_FAILED_DETAIL,
+    INVALID_JSON_DETAIL,
+    MISSING_DOCUMENTS_DETAIL,
+    MISSING_TRIAL_DATA_DETAIL,
+    LIVENESS_STATUS,
+    READINESS_STATUS,
+    REPORT_GENERATION_FAILED_DETAIL,
+    SESSION_EXPIRED_DETAIL,
+    SESSION_NOT_FOUND_DETAIL,
+    SERVICE_NAME,
+    TRIAL_PROCESSING_FAILED_DETAIL,
+    UNSUPPORTED_DOCUMENT_DETAIL,
+)
+from trialscribe_ai.utils.exceptions import (
+    AIEngineError,
+    DocumentUploadError,
+    InvalidJsonFileError,
+    MissingDocumentsError,
+    MissingTrialDataError,
+    ReportGenerationError,
+    SessionExpiredError,
+    SessionNotFoundError,
+    TrialProcessingError,
+    UnsupportedDocumentError,
 )
 
 trial_processor = TrialDataProcessor()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     """Background cleanup task using lifespan event handler"""
     cleanup_task = asyncio.create_task(cleanup_sessions())
     yield
     cleanup_task.cancel()
 
+
 app: FastAPI = FastAPI(
-    title="TrialScribe API",
-    version="2.0.0",
-    description="Multi-user clinical trial protocol generation API",
+    title=APP_TITLE,
+    version=APP_VERSION,
+    description=APP_DESCRIPTION,
     lifespan=lifespan,
 )
 
@@ -47,75 +79,107 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(AIEngineError)
+async def ai_engine_error_response(
+    _request: Request,
+    error: AIEngineError,
+) -> JSONResponse:
+    """Translate expected failures without exposing exception text."""
+
+    if isinstance(error, SessionNotFoundError):
+        status_code, detail = 404, SESSION_NOT_FOUND_DETAIL
+    elif isinstance(error, SessionExpiredError):
+        status_code, detail = 404, SESSION_EXPIRED_DETAIL
+    elif isinstance(error, InvalidJsonFileError):
+        status_code, detail = 400, INVALID_JSON_DETAIL
+    elif isinstance(error, UnsupportedDocumentError):
+        status_code, detail = 400, UNSUPPORTED_DOCUMENT_DETAIL
+    elif isinstance(error, MissingTrialDataError):
+        status_code, detail = 400, MISSING_TRIAL_DATA_DETAIL
+    elif isinstance(error, MissingDocumentsError):
+        status_code, detail = 400, MISSING_DOCUMENTS_DETAIL
+    elif isinstance(error, TrialProcessingError):
+        status_code, detail = 500, TRIAL_PROCESSING_FAILED_DETAIL
+    elif isinstance(error, DocumentUploadError):
+        status_code, detail = 500, DOCUMENT_UPLOAD_FAILED_DETAIL
+    else:
+        status_code, detail = 500, REPORT_GENERATION_FAILED_DETAIL
+    return JSONResponse(status_code=status_code, content={"detail": detail})
+
+
 @app.get("/health/live", response_model=HealthResponse)
 async def liveness() -> HealthResponse:
-    return HealthResponse(status="ok", service="ai-engine", version=app.version)
+    return HealthResponse(
+        status=LIVENESS_STATUS,
+        service=SERVICE_NAME,
+        version=app.version,
+    )
 
 
 @app.get("/health/ready", response_model=HealthResponse)
 async def readiness() -> HealthResponse:
-    return HealthResponse(status="ready", service="ai-engine", version=app.version)
+    return HealthResponse(
+        status=READINESS_STATUS,
+        service=SERVICE_NAME,
+        version=app.version,
+    )
 
 
 @app.post("/sessions", response_model=SessionResponse)
-async def create_session():
+async def create_session() -> SessionResponse:
     """Create a new user session"""
     session_id = session_manager.create_session()
     return SessionResponse(
-        session_id=session_id,
-        message="Session created successfully"
+        session_id=session_id, message="Session created successfully"
     )
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str) -> dict[str, str]:
     """Delete a user session"""
-    if session_id in ACTIVE_SESSIONS:
-        del ACTIVE_SESSIONS[session_id]
-        return {"message": "Session deleted successfully"}
-    raise HTTPException(status_code=404, detail="Session not found")
+    session_manager.delete_session(session_id)
+    return {"message": "Session deleted successfully"}
 
 
 @app.post("/sessions/{session_id}/upload-json")
 async def upload_trial_json(
     session_id: str,
     file: UploadFile = File(...),
-    session = Depends(get_session)
-):
+    session: dict[str, Any] = Depends(get_session),
+) -> dict[str, str]:
     """Upload and process trial JSON file for a specific session"""
     try:
         contents = await file.read()
         try:
             trial_data = json.loads(contents)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON file")
+            raise InvalidJsonFileError from None
 
         json_fields = trial_processor.process_json(trial_data)
         summary = session["database"].add_json_data(json_fields)
 
         session["summary"] = summary
 
-        return {
-            "session_id": session_id,
-            "message": "JSON file processed successfully"
-        }
+        return {"session_id": session_id, "message": "JSON file processed successfully"}
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+    except AIEngineError:
+        raise
+    except Exception as error:
+        raise TrialProcessingError from error
 
 
 @app.post("/sessions/{session_id}/upload-documents")
 async def upload_supporting_docs(
     session_id: str,
-    files: List[UploadFile] = File(...),
-    session = Depends(get_session)
-):
+    files: list[UploadFile] = File(...),
+    session: dict[str, Any] = Depends(get_session),
+) -> dict[str, str | int]:
     """Upload supporting documents for a specific session"""
+    temp_paths: list[str] = []
     try:
-        temp_paths = []
         for file in files:
-            if not file.filename.lower().endswith('.pdf'):
-                raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            if not (file.filename or "").lower().endswith(".pdf"):
+                raise UnsupportedDocumentError
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                 shutil.copyfileobj(file.file, tmp)
@@ -127,37 +191,36 @@ async def upload_supporting_docs(
         return {
             "session_id": session_id,
             "message": f"{len(files)} documents uploaded successfully",
-            "total_documents": len(session["documents"])
+            "total_documents": len(session["documents"]),
         }
 
-    except Exception as e:
+    except Exception as error:
         for path in temp_paths:
             if os.path.exists(path):
                 os.unlink(path)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        if isinstance(error, AIEngineError):
+            raise
+        raise DocumentUploadError from error
 
 
 @app.post("/sessions/{session_id}/generate-report")
 async def generate_report(
     session_id: str,
     query: QueryRequest,
-    session = Depends(get_session)
-):
+    session: dict[str, Any] = Depends(get_session),
+) -> dict[str, Any]:
 
     if not session["summary"]:
-        raise HTTPException(status_code=400, detail="No JSON data found. Please upload trial JSON first.")
+        raise MissingTrialDataError
 
     if not session["documents"]:
-        raise HTTPException(status_code=400, detail="No supporting documents found. Please upload documents first.")
+        raise MissingDocumentsError
 
     try:
         start_time = datetime.now()
 
         state = AgentState(
-            query=query.query,
-            sections=[],
-            written_texts=[],
-            summary=session["summary"]
+            query=query.query, sections=[], written_texts=[], summary=session["summary"]
         )
 
         result = await session["agent"].ainvoke(state)
@@ -170,11 +233,11 @@ async def generate_report(
             "query": query.query,
             "written_texts": result.get("written_texts", []),
             "generated_at": end_time.isoformat(),
-            "processing_time_seconds": processing_time
+            "processing_time_seconds": processing_time,
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+    except Exception as error:
+        raise ReportGenerationError from error
 
 
 if __name__ == "__main__":

@@ -14,6 +14,15 @@ from trialscribe_db.runtime import create_database_runtime
 from trialscribe_auth.api.routes import router as auth_router
 from trialscribe_auth.config import AuthSettings
 from trialscribe_auth.models.health import HealthResponse
+from trialscribe_auth.utils.constant import (
+    APP_TITLE,
+    APP_VERSION,
+    LIVENESS_STATUS,
+    READINESS_STATUS,
+    SERVICE_NAME,
+    SERVICE_UNAVAILABLE_DETAIL,
+)
+from trialscribe_auth.utils.exceptions import DependencyUnavailableError
 
 
 @asynccontextmanager
@@ -32,8 +41,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 app: FastAPI = FastAPI(
-    title="TrialScribe Auth",
-    version="0.1.0",
+    title=APP_TITLE,
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 app.include_router(auth_router)
@@ -56,7 +65,11 @@ async def request_validation_error(
 
 @app.get("/health/live", response_model=HealthResponse)
 async def liveness() -> HealthResponse:
-    return HealthResponse(status="ok", service="auth-service", version=app.version)
+    return HealthResponse(
+        status=LIVENESS_STATUS,
+        service=SERVICE_NAME,
+        version=app.version,
+    )
 
 
 @app.get("/health/ready", response_model=HealthResponse)
@@ -65,11 +78,14 @@ async def readiness(request: Request) -> HealthResponse:
         async with request.app.state.database_runtime.transaction() as session:
             await session.execute(text("SELECT 1"))
         if not await request.app.state.redis.ping():
-            raise RuntimeError("Redis ping failed")
+            raise DependencyUnavailableError("Redis ping failed")
     except Exception:
-        raise HTTPException(status_code=503, detail="Service unavailable") from None
+        raise HTTPException(
+            status_code=503,
+            detail=SERVICE_UNAVAILABLE_DETAIL,
+        ) from None
     return HealthResponse(
-        status="ready",
-        service="auth-service",
+        status=READINESS_STATUS,
+        service=SERVICE_NAME,
         version=request.app.version,
     )

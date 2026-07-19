@@ -6,15 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from trialscribe_auth.config import AuthSettings
-
-_FIXED_WINDOW_SCRIPT = """
-local count = redis.call('INCR', KEYS[1])
-if count == 1 then
-  redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-local ttl = redis.call('TTL', KEYS[1])
-return {count, ttl}
-"""
+from trialscribe_auth.utils.constant import FIXED_WINDOW_SCRIPT
+from trialscribe_auth.utils.exceptions import RateLimitUnavailableError
 
 
 class AsyncRateLimitBackend(Protocol):
@@ -26,10 +19,6 @@ class AsyncRateLimitBackend(Protocol):
     ) -> Any: ...
 
     async def delete(self, *names: str) -> int: ...
-
-
-class RateLimitUnavailableError(RuntimeError):
-    """Login throttling cannot currently be enforced."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +53,7 @@ class LoginRateLimiter:
         key = self._key(normalized_email, peer_address)
         try:
             raw_result = await self._backend.eval(
-                _FIXED_WINDOW_SCRIPT,
+                FIXED_WINDOW_SCRIPT,
                 1,
                 key,
                 self._window_seconds,

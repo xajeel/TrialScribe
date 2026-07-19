@@ -7,10 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_auth.models.account import Account
-
-
-class DuplicateAccountError(RuntimeError):
-    """A normalized email already belongs to an account."""
+from trialscribe_auth.utils.exceptions import DuplicateAccountError
 
 
 class AccountRepository:

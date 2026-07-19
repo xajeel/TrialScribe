@@ -26,7 +26,10 @@ from trialscribe_auth.config import AuthSettings
 from trialscribe_auth.models.account import Account
 from trialscribe_auth.models.session import AuthSession, RefreshToken
 from trialscribe_auth.repositories.accounts import DuplicateAccountError
-from trialscribe_auth.security.rate_limit import RateLimitDecision
+from trialscribe_auth.security.rate_limit import (
+    RateLimitDecision,
+    RateLimitUnavailableError,
+)
 from trialscribe_auth.security.tokens import AccessTokenCodec
 
 NOW = datetime(2026, 7, 18, 11, 0, tzinfo=UTC)
@@ -137,7 +140,10 @@ class FakeSessionRepository:
     async def revoke_all(self, account_id: UUID, revoked_at: datetime) -> int:
         count = 0
         for auth_session in self.state.sessions.values():
-            if auth_session.account_id == account_id and auth_session.revoked_at is None:
+            if (
+                auth_session.account_id == account_id
+                and auth_session.revoked_at is None
+            ):
                 auth_session.revoked_at = revoked_at
                 count += 1
         return count
@@ -184,7 +190,9 @@ def api_context(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         app.dependency_overrides.clear()
 
 
-def register_and_login(client: TestClient, email: str = "person@example.com") -> dict[str, Any]:
+def register_and_login(
+    client: TestClient, email: str = "person@example.com"
+) -> dict[str, Any]:
     registration = client.post(
         "/v1/auth/register",
         json={"email": email, "password": PASSWORD},
@@ -214,7 +222,9 @@ def test_register_login_me_and_refresh_contract(api_context: dict[str, Any]) -> 
         json={"email": "person@example.com", "password": PASSWORD},
     )
     set_cookie = cookie_response.headers.get_list("set-cookie")
-    assert any("HttpOnly" in value and "SameSite=strict" in value for value in set_cookie)
+    assert any(
+        "HttpOnly" in value and "SameSite=strict" in value for value in set_cookie
+    )
     original_refresh = client.cookies.get("trialscribe_refresh")
     csrf = client.cookies.get("trialscribe_csrf")
     assert original_refresh is not None
@@ -252,7 +262,9 @@ def test_invalid_credentials_share_one_response(
             json={"email": email, "password": PASSWORD},
         )
 
-    response = client.post("/v1/auth/login", json={"email": email, "password": password})
+    response = client.post(
+        "/v1/auth/login", json={"email": email, "password": password}
+    )
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid authentication credentials"}
@@ -273,16 +285,40 @@ def test_sixth_failed_login_is_throttled(api_context: dict[str, Any]) -> None:
     assert responses[-1].headers["retry-after"] == "300"
 
 
+def test_rate_limit_exception_text_is_not_returned(
+    api_context: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limiter = api_context["limiter"]
+
+    async def unavailable(*_args: object) -> None:
+        raise RateLimitUnavailableError("redis://user:secret@internal-host")
+
+    monkeypatch.setattr(limiter, "record_failure", unavailable)
+
+    response = api_context["client"].post(
+        "/v1/auth/login",
+        json={"email": "unknown@example.com", "password": PASSWORD},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Authentication service unavailable"}
+    assert "secret" not in response.text
+
+
 def test_refresh_replay_revokes_replacement_family(api_context: dict[str, Any]) -> None:
     client: TestClient = api_context["client"]
     register_and_login(client)
     original_refresh = client.cookies.get("trialscribe_refresh")
     original_csrf = client.cookies.get("trialscribe_csrf")
     assert original_refresh and original_csrf
-    assert client.post(
-        "/v1/auth/refresh",
-        headers={"X-CSRF-Token": original_csrf},
-    ).status_code == 200
+    assert (
+        client.post(
+            "/v1/auth/refresh",
+            headers={"X-CSRF-Token": original_csrf},
+        ).status_code
+        == 200
+    )
     replacement_refresh = client.cookies.get("trialscribe_refresh")
     replacement_csrf = client.cookies.get("trialscribe_csrf")
     assert replacement_refresh and replacement_csrf
@@ -329,8 +365,7 @@ def test_inactive_account_cannot_refresh(api_context: dict[str, Any]) -> None:
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid authentication credentials"}
     assert all(
-        session.revoked_at == NOW
-        for session in api_context["state"].sessions.values()
+        session.revoked_at == NOW for session in api_context["state"].sessions.values()
     )
     assert all(
         "Max-Age=0" in value for value in response.headers.get_list("set-cookie")
@@ -355,10 +390,13 @@ def test_current_logout_and_logout_all_have_distinct_scope(
     assert logout.status_code == 204
     second_csrf = second.cookies.get("trialscribe_csrf")
     assert second_csrf
-    assert second.post(
-        "/v1/auth/refresh",
-        headers={"X-CSRF-Token": second_csrf},
-    ).status_code == 200
+    assert (
+        second.post(
+            "/v1/auth/refresh",
+            headers={"X-CSRF-Token": second_csrf},
+        ).status_code
+        == 200
+    )
 
     logout_all = first.post(
         "/v1/auth/logout-all",
@@ -367,10 +405,13 @@ def test_current_logout_and_logout_all_have_distinct_scope(
     assert logout_all.status_code == 204
     second_csrf = second.cookies.get("trialscribe_csrf")
     assert second_csrf
-    assert second.post(
-        "/v1/auth/refresh",
-        headers={"X-CSRF-Token": second_csrf},
-    ).status_code == 401
+    assert (
+        second.post(
+            "/v1/auth/refresh",
+            headers={"X-CSRF-Token": second_csrf},
+        ).status_code
+        == 401
+    )
 
 
 def test_tampered_and_expired_access_tokens_share_one_response(
@@ -405,7 +446,9 @@ def test_missing_csrf_rejects_and_clears_session_cookies(
 
     assert response.status_code == 401
     assert len(response.headers.get_list("set-cookie")) == 2
-    assert all("Max-Age=0" in value for value in response.headers.get_list("set-cookie"))
+    assert all(
+        "Max-Age=0" in value for value in response.headers.get_list("set-cookie")
+    )
 
 
 def test_registration_validation_never_echoes_password(
@@ -443,7 +486,9 @@ def test_lifespan_closes_database_and_redis_on_shutdown(
     redis = LifecycleRedis()
     monkeypatch.setattr(app_module, "AuthSettings", lambda: settings)
     monkeypatch.setattr(app_module, "DatabaseSettings", lambda: object())
-    monkeypatch.setattr(app_module, "create_database_runtime", lambda _settings: database)
+    monkeypatch.setattr(
+        app_module, "create_database_runtime", lambda _settings: database
+    )
     monkeypatch.setattr(
         app_module.Redis,
         "from_url",

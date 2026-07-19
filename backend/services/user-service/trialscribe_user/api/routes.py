@@ -47,6 +47,15 @@ from trialscribe_user.services.organizations import (
     MembershipConflictError,
     OrganizationService,
 )
+from trialscribe_user.utils.constant import (
+    INVALID_INVITATION_DETAIL,
+    INVALID_ORGANIZATION_DETAIL,
+    INVITATION_CONFLICT_DETAIL,
+    MEMBERSHIP_CONFLICT_DETAIL,
+    ORGANIZATION_NOT_FOUND_DETAIL,
+    PERMISSION_DENIED_DETAIL,
+    SERVICE_UNAVAILABLE_DETAIL,
+)
 
 router = APIRouter(tags=["organizations"])
 
@@ -65,17 +74,18 @@ def _organization_response(
 
 def _translate_service_error(error: Exception) -> HTTPException:
     if isinstance(error, OrganizationNotFoundError):
-        return HTTPException(status_code=404, detail="Organization not found")
+        return HTTPException(status_code=404, detail=ORGANIZATION_NOT_FOUND_DETAIL)
     if isinstance(error, PermissionDeniedError):
-        return HTTPException(status_code=403, detail="Organization permission denied")
-    if isinstance(error, (MembershipConflictError, InvitationConflictError)):
-        return HTTPException(status_code=409, detail=str(error))
-    if isinstance(
-        error,
-        (InvalidOrganizationInput, InvalidInvitationInput, InvalidInvitationError),
-    ):
-        return HTTPException(status_code=422, detail=str(error))
-    return HTTPException(status_code=500, detail="Service unavailable")
+        return HTTPException(status_code=403, detail=PERMISSION_DENIED_DETAIL)
+    if isinstance(error, MembershipConflictError):
+        return HTTPException(status_code=409, detail=MEMBERSHIP_CONFLICT_DETAIL)
+    if isinstance(error, InvitationConflictError):
+        return HTTPException(status_code=409, detail=INVITATION_CONFLICT_DETAIL)
+    if isinstance(error, InvalidOrganizationInput):
+        return HTTPException(status_code=422, detail=INVALID_ORGANIZATION_DETAIL)
+    if isinstance(error, (InvalidInvitationInput, InvalidInvitationError)):
+        return HTTPException(status_code=422, detail=INVALID_INVITATION_DETAIL)
+    return HTTPException(status_code=500, detail=SERVICE_UNAVAILABLE_DETAIL)
 
 
 @router.post("/v1/organizations", response_model=OrganizationResponse, status_code=201)
@@ -105,7 +115,10 @@ async def list_organizations(
             OrganizationRepository(session),
             MembershipRepository(session),
         ).list_organizations(account_id)
-    return [_organization_response(organization, membership) for organization, membership in records]
+    return [
+        _organization_response(organization, membership)
+        for organization, membership in records
+    ]
 
 
 @router.get(

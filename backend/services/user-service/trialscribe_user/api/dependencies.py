@@ -10,7 +10,11 @@ from fastapi.security import OAuth2PasswordBearer
 from trialscribe_db.runtime import DatabaseRuntime
 
 from trialscribe_user.config import UserSettings
-from trialscribe_user.security.tokens import AccessTokenVerifier, InvalidAccessTokenError
+from trialscribe_user.security.tokens import (
+    AccessTokenVerifier,
+    InvalidAccessTokenError,
+)
+from trialscribe_user.utils.constant import INVALID_AUTHENTICATION_DETAIL
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login", auto_error=False)
 
@@ -36,7 +40,7 @@ def get_now() -> datetime:
 def _authentication_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authentication credentials",
+        detail=INVALID_AUTHENTICATION_DETAIL,
         headers={"WWW-Authenticate": "Bearer"},
     )
 

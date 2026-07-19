@@ -7,10 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_user.models.invitation import Invitation
-
-
-class DuplicateInvitationError(RuntimeError):
-    """A live invitation or token hash conflicts with persisted state."""
+from trialscribe_user.utils.exceptions import DuplicateInvitationError
 
 
 class InvitationRepository:
