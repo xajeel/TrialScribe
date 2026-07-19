@@ -1,34 +1,47 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import json
-import tempfile
-import shutil
-import os
 import asyncio
 from datetime import datetime
-import uvicorn
-from contextlib import asynccontextmanager
+import json
+import os
+import shutil
+import tempfile
 
-from trialscribe_ai.retrieval.trial_processor import TrialDataProcessor
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
+from trialscribe_db.config import DatabaseSettings
+from trialscribe_db.runtime import create_database_runtime
+
+from trialscribe_ai.api.conversations import router as conversation_router
+from trialscribe_ai.api.sessions import (
+    QueryRequest,
+    SessionResponse,
+    cleanup_sessions,
+    get_session,
+    session_manager,
+)
 from trialscribe_ai.models.health import HealthResponse
 from trialscribe_ai.models.schemas import AgentState
-from trialscribe_ai.api.sessions import (
-    session_manager,
-    get_session,
-    cleanup_sessions,
-    SessionResponse,
-    QueryRequest,
-)
+from trialscribe_ai.retrieval.trial_processor import TrialDataProcessor
 from trialscribe_ai.utils.constant import (
     APP_DESCRIPTION,
     APP_TITLE,
     APP_VERSION,
+    COLLABORATOR_CONFLICT_DETAIL,
+    CONVERSATION_ARCHIVED_DETAIL,
+    CONVERSATION_NOT_FOUND_DETAIL,
+    CONVERSATION_PERMISSION_DENIED_DETAIL,
     DOCUMENT_UPLOAD_FAILED_DETAIL,
     INVALID_JSON_DETAIL,
+    INVALID_CONVERSATION_INPUT_DETAIL,
+    INVALID_CURSOR_DETAIL,
     MISSING_DOCUMENTS_DETAIL,
     MISSING_TRIAL_DATA_DETAIL,
     LIVENESS_STATUS,
@@ -37,13 +50,20 @@ from trialscribe_ai.utils.constant import (
     SESSION_EXPIRED_DETAIL,
     SESSION_NOT_FOUND_DETAIL,
     SERVICE_NAME,
+    SERVICE_UNAVAILABLE_DETAIL,
     TRIAL_PROCESSING_FAILED_DETAIL,
     UNSUPPORTED_DOCUMENT_DETAIL,
 )
 from trialscribe_ai.utils.exceptions import (
     AIEngineError,
+    CollaboratorConflictError,
+    ConversationArchivedError,
+    ConversationNotFoundError,
+    ConversationPermissionDeniedError,
     DocumentUploadError,
     InvalidJsonFileError,
+    InvalidConversationInputError,
+    InvalidCursorError,
     MissingDocumentsError,
     MissingTrialDataError,
     ReportGenerationError,
@@ -57,11 +77,18 @@ trial_processor = TrialDataProcessor()
 
 
 @asynccontextmanager
-async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
-    """Background cleanup task using lifespan event handler"""
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Own durable database and legacy-session cleanup resources."""
+
+    application.state.database_runtime = create_database_runtime(DatabaseSettings())
     cleanup_task = asyncio.create_task(cleanup_sessions())
-    yield
-    cleanup_task.cancel()
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
+        await application.state.database_runtime.dispose()
 
 
 app: FastAPI = FastAPI(
@@ -70,6 +97,7 @@ app: FastAPI = FastAPI(
     description=APP_DESCRIPTION,
     lifespan=lifespan,
 )
+app.include_router(conversation_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,7 +114,19 @@ async def ai_engine_error_response(
 ) -> JSONResponse:
     """Translate expected failures without exposing exception text."""
 
-    if isinstance(error, SessionNotFoundError):
+    if isinstance(error, ConversationNotFoundError):
+        status_code, detail = 404, CONVERSATION_NOT_FOUND_DETAIL
+    elif isinstance(error, ConversationPermissionDeniedError):
+        status_code, detail = 403, CONVERSATION_PERMISSION_DENIED_DETAIL
+    elif isinstance(error, ConversationArchivedError):
+        status_code, detail = 409, CONVERSATION_ARCHIVED_DETAIL
+    elif isinstance(error, CollaboratorConflictError):
+        status_code, detail = 409, COLLABORATOR_CONFLICT_DETAIL
+    elif isinstance(error, InvalidCursorError):
+        status_code, detail = 422, INVALID_CURSOR_DETAIL
+    elif isinstance(error, InvalidConversationInputError):
+        status_code, detail = 422, INVALID_CONVERSATION_INPUT_DETAIL
+    elif isinstance(error, SessionNotFoundError):
         status_code, detail = 404, SESSION_NOT_FOUND_DETAIL
     elif isinstance(error, SessionExpiredError):
         status_code, detail = 404, SESSION_EXPIRED_DETAIL
@@ -107,6 +147,21 @@ async def ai_engine_error_response(
     return JSONResponse(status_code=status_code, content={"detail": detail})
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(
+    _request: Request,
+    error: RequestValidationError,
+) -> JSONResponse:
+    safe_errors = [
+        {key: value for key, value in item.items() if key != "input"}
+        for item in error.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(safe_errors)},
+    )
+
+
 @app.get("/health/live", response_model=HealthResponse)
 async def liveness() -> HealthResponse:
     return HealthResponse(
@@ -117,11 +172,19 @@ async def liveness() -> HealthResponse:
 
 
 @app.get("/health/ready", response_model=HealthResponse)
-async def readiness() -> HealthResponse:
+async def readiness(request: Request) -> HealthResponse:
+    try:
+        async with request.app.state.database_runtime.transaction() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=SERVICE_UNAVAILABLE_DETAIL,
+        ) from None
     return HealthResponse(
         status=READINESS_STATUS,
         service=SERVICE_NAME,
-        version=app.version,
+        version=request.app.version,
     )
 
 
@@ -238,7 +301,3 @@ async def generate_report(
 
     except Exception as error:
         raise ReportGenerationError from error
-
-
-if __name__ == "__main__":
-    uvicorn.run("trialscribe_ai.api.app:app", host="localhost", port=8000, reload=True)

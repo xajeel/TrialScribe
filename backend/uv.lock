@@ -3875,6 +3875,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "tiktoken" },
+    { name = "trialscribe-database" },
     { name = "unstructured" },
 ]
 
@@ -3899,6 +3900,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.0,<2" },
     { name = "requests", specifier = ">=2.32.3,<3" },
     { name = "tiktoken", specifier = ">=0.9.0,<0.10" },
+    { name = "trialscribe-database", editable = "packages/database" },
     { name = "unstructured", specifier = ">=0.17.2,<0.18" },
 ]
 

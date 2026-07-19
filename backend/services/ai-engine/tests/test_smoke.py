@@ -1,4 +1,6 @@
+from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,16 @@ from trialscribe_ai.agents.graph import graph_builder
 from trialscribe_ai.retrieval.trial_processor import TrialDataProcessor
 
 client = TestClient(app)
+
+
+class HealthyDatabaseRuntime:
+    @asynccontextmanager
+    async def transaction(self) -> Any:
+        class Session:
+            async def execute(self, _statement: object) -> None:
+                return None
+
+        yield Session()
 
 
 def test_api_app_imports() -> None:
@@ -28,7 +40,15 @@ def test_liveness() -> None:
 
 
 def test_readiness() -> None:
-    response = client.get("/health/ready")
+    previous = getattr(app.state, "database_runtime", None)
+    app.state.database_runtime = HealthyDatabaseRuntime()
+    try:
+        response = client.get("/health/ready")
+    finally:
+        if previous is None:
+            del app.state.database_runtime
+        else:
+            app.state.database_runtime = previous
 
     assert response.status_code == 200
     assert response.json() == {
