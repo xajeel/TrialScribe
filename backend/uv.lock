@@ -3977,10 +3977,18 @@ version = "0.1.0"
 source = { editable = "services/api-gateway" }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
+    { name = "httpx" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
+requires-dist = [
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "pydantic-settings", specifier = "==2.14.2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
+]
 
 [[package]]
 name = "trialscribe-user"
