@@ -25,18 +25,11 @@ from trialscribe_user.services.authorization import (
     AuthorizationService,
     OrganizationAction,
 )
-
-
-class InvalidInvitationInput(ValueError):
-    """Invitation input does not meet the public contract."""
-
-
-class InvitationConflictError(RuntimeError):
-    """An invitation conflicts with current membership or invitation state."""
-
-
-class InvalidInvitationError(ValueError):
-    """An invitation token is unusable without revealing why."""
+from trialscribe_user.utils.exceptions import (
+    InvalidInvitationError,
+    InvalidInvitationInput,
+    InvitationConflictError,
+)
 
 
 def normalize_email(email: str) -> str:
@@ -138,7 +131,9 @@ class InvitationService:
         invitations = await self._invitations.list_for_organization(organization_id)
         actor = await self._memberships.get(organization_id, actor_account_id)
         if actor is not None and actor.role == MembershipRole.ADMIN.value:
-            return [item for item in invitations if item.role == MembershipRole.MEMBER.value]
+            return [
+                item for item in invitations if item.role == MembershipRole.MEMBER.value
+            ]
         return invitations
 
     async def revoke_invitation(
@@ -188,7 +183,10 @@ class InvitationService:
         )
         if invited_account_id != account_id:
             raise InvalidInvitationError("Invalid organization invitation")
-        if await self._memberships.get(invitation.organization_id, account_id) is not None:
+        if (
+            await self._memberships.get(invitation.organization_id, account_id)
+            is not None
+        ):
             raise InvitationConflictError("Account already belongs to organization")
         membership = Membership(
             id=uuid4(),
@@ -199,7 +197,9 @@ class InvitationService:
         try:
             await self._memberships.add(membership)
         except DuplicateMembershipError:
-            raise InvitationConflictError("Account already belongs to organization") from None
+            raise InvitationConflictError(
+                "Account already belongs to organization"
+            ) from None
         invitation.accepted_at = accepted_at
         await self._invitations.flush()
         return membership
@@ -219,7 +219,9 @@ class InvitationService:
         try:
             normalized_role = MembershipRole(role)
         except ValueError:
-            raise InvalidInvitationInput("Invitation role must be admin or member") from None
+            raise InvalidInvitationInput(
+                "Invitation role must be admin or member"
+            ) from None
         if normalized_role not in {MembershipRole.ADMIN, MembershipRole.MEMBER}:
             raise InvalidInvitationInput("Invitation role must be admin or member")
         return normalized_role

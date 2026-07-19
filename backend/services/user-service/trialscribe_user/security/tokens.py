@@ -7,13 +7,11 @@ from pydantic import ValidationError
 
 from trialscribe_user.config import UserSettings
 from trialscribe_user.schemas.auth import AccessClaims
-
-ALGORITHM = "EdDSA"
-REQUIRED_CLAIMS = ("sub", "iss", "aud", "iat", "nbf", "exp", "jti", "type")
-
-
-class InvalidAccessTokenError(ValueError):
-    """An access token failed the public authentication contract."""
+from trialscribe_user.utils.constant import (
+    ACCESS_TOKEN_ALGORITHM,
+    ACCESS_TOKEN_REQUIRED_CLAIMS,
+)
+from trialscribe_user.utils.exceptions import InvalidAccessTokenError
 
 
 def _utc(value: datetime) -> datetime:
@@ -34,19 +32,25 @@ class AccessTokenVerifier:
             payload = jwt.decode(
                 token,
                 self._settings.verification_key(),
-                algorithms=[ALGORITHM],
+                algorithms=[ACCESS_TOKEN_ALGORITHM],
                 audience=self._settings.auth_jwt_audience,
                 issuer=self._settings.auth_jwt_issuer,
                 options={
-                    "require": list(REQUIRED_CLAIMS),
+                    "require": list(ACCESS_TOKEN_REQUIRED_CLAIMS),
                     "verify_exp": False,
                     "verify_iat": False,
                     "verify_nbf": False,
                 },
             )
             claims = AccessClaims.model_validate(payload)
-            if claims.exp <= checked_at or claims.nbf > checked_at or claims.iat > checked_at:
+            if (
+                claims.exp <= checked_at
+                or claims.nbf > checked_at
+                or claims.iat > checked_at
+            ):
                 raise ValueError("token time is invalid")
             return claims
         except (jwt.PyJWTError, ValidationError, TypeError, ValueError):
-            raise InvalidAccessTokenError("Invalid authentication credentials") from None
+            raise InvalidAccessTokenError(
+                "Invalid authentication credentials"
+            ) from None

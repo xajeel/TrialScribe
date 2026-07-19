@@ -12,6 +12,7 @@ from trialscribe_db.runtime import DatabaseRuntime
 from trialscribe_auth.config import AuthSettings
 from trialscribe_auth.security.rate_limit import LoginRateLimiter
 from trialscribe_auth.security.tokens import AccessTokenCodec
+from trialscribe_auth.utils.constant import INVALID_AUTHENTICATION_DETAIL
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login", auto_error=False)
 
@@ -51,7 +52,7 @@ async def get_bearer_token(
     if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail=INVALID_AUTHENTICATION_DETAIL,
             headers={"WWW-Authenticate": "Bearer"},
         )
     return token

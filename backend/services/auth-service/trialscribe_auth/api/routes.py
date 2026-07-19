@@ -43,11 +43,16 @@ from trialscribe_auth.services.accounts import (
     normalize_email,
 )
 from trialscribe_auth.services.sessions import SessionCredentials, SessionService
-
-REFRESH_COOKIE = "trialscribe_refresh"
-CSRF_COOKIE = "trialscribe_csrf"
-COOKIE_PATH = "/v1/auth"
-INVALID_DETAIL = "Invalid authentication credentials"
+from trialscribe_auth.utils.constant import (
+    ACCOUNT_CONFLICT_DETAIL,
+    AUTH_COOKIE_PATH,
+    AUTHENTICATION_UNAVAILABLE_DETAIL,
+    CSRF_COOKIE,
+    INVALID_ACCOUNT_DETAIL,
+    INVALID_AUTHENTICATION_DETAIL,
+    REFRESH_COOKIE,
+    TOO_MANY_ATTEMPTS_DETAIL,
+)
 
 router = APIRouter(prefix="/v1/auth", tags=["authentication"])
 
@@ -55,7 +60,7 @@ router = APIRouter(prefix="/v1/auth", tags=["authentication"])
 def _authentication_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=INVALID_DETAIL,
+        detail=INVALID_AUTHENTICATION_DETAIL,
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -70,7 +75,7 @@ def _set_session_cookies(
     shared = {
         "secure": settings.auth_cookie_secure,
         "samesite": "strict",
-        "path": COOKIE_PATH,
+        "path": AUTH_COOKIE_PATH,
         "max_age": max_age,
     }
     response.set_cookie(
@@ -90,14 +95,14 @@ def _set_session_cookies(
 def _clear_session_cookies(response: Response, settings: AuthSettings) -> None:
     response.delete_cookie(
         REFRESH_COOKIE,
-        path=COOKIE_PATH,
+        path=AUTH_COOKIE_PATH,
         secure=settings.auth_cookie_secure,
         httponly=True,
         samesite="strict",
     )
     response.delete_cookie(
         CSRF_COOKIE,
-        path=COOKIE_PATH,
+        path=AUTH_COOKIE_PATH,
         secure=settings.auth_cookie_secure,
         httponly=False,
         samesite="strict",
@@ -107,7 +112,7 @@ def _clear_session_cookies(response: Response, settings: AuthSettings) -> None:
 def _rejected_cookie_response(settings: AuthSettings) -> JSONResponse:
     response = JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": INVALID_DETAIL},
+        content={"detail": INVALID_AUTHENTICATION_DETAIL},
         headers={"WWW-Authenticate": "Bearer"},
     )
     _clear_session_cookies(response, settings)
@@ -137,10 +142,10 @@ async def register(
                 body.email,
                 body.password,
             )
-    except AccountConflictError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from None
-    except InvalidAccountInput as error:
-        raise HTTPException(status_code=422, detail=str(error)) from None
+    except AccountConflictError:
+        raise HTTPException(status_code=409, detail=ACCOUNT_CONFLICT_DETAIL) from None
+    except InvalidAccountInput:
+        raise HTTPException(status_code=422, detail=INVALID_ACCOUNT_DETAIL) from None
     return AccountResponse.model_validate(account)
 
 
@@ -173,20 +178,26 @@ async def login(
         if not valid_credentials:
             try:
                 decision = await limiter.record_failure(normalized_email, peer_address)
-            except RateLimitUnavailableError as error:
-                raise HTTPException(status_code=503, detail=str(error)) from None
+            except RateLimitUnavailableError:
+                raise HTTPException(
+                    status_code=503,
+                    detail=AUTHENTICATION_UNAVAILABLE_DETAIL,
+                ) from None
             if not decision.allowed:
                 raise HTTPException(
                     status_code=429,
-                    detail="Too many authentication attempts",
+                    detail=TOO_MANY_ATTEMPTS_DETAIL,
                     headers={"Retry-After": str(decision.retry_after)},
                 )
             raise _authentication_error()
 
         try:
             await limiter.clear_success(normalized_email, peer_address)
-        except RateLimitUnavailableError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from None
+        except RateLimitUnavailableError:
+            raise HTTPException(
+                status_code=503,
+                detail=AUTHENTICATION_UNAVAILABLE_DETAIL,
+            ) from None
         credentials = await SessionService(
             SessionRepository(session),
             settings,

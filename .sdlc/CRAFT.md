@@ -28,6 +28,7 @@ Source: derived from codebase · 2026-07-15
 - `backend/services/ai-engine/trialscribe_ai/config/` → runtime settings and allow-lists
 - `backend/services/ai-engine/tests/test_*.py` → pytest tests
 - `backend/services/worker-service/trialscribe_worker/` → FastAPI worker health boundary; tests live in `backend/services/worker-service/tests/test_*.py`
+- Every service package owns a `utils/` directory: stable values live in `utils/constant.py`, enums live in `utils/enum.py`, and service-specific exception types live in `utils/exceptions.py`.
 - `frontend/streamlit-ui/` → interim Streamlit UI; `frontend/web/` remains a separate planned frontend
 - `frontend/web/src/` → React application shell and colocated `*.test.tsx` unit tests
 - `infra/` → Docker Compose initialization assets for local infrastructure only
@@ -44,6 +45,7 @@ Source: derived from codebase · 2026-07-15
 - Add type annotations to every new or changed function; existing untyped functions are `(legacy)`.
 - Do not duplicate graph assembly or business logic in UI modules; current Streamlit duplication is `(legacy)`.
 - One concern per module; API routes, models, retrieval, storage, and graph construction remain separate.
+- Do not define service constants, enums, or exception classes in routes, models, repositories, security modules, or service modules; import them from that service's `utils/` modules.
 
 ## Config & secrets
 - AI provider and workflow settings are read from environment variables in `backend/services/ai-engine/trialscribe_ai/config/settings.py`.
@@ -59,6 +61,7 @@ Source: derived from codebase · 2026-07-15
 - Restrict external retrieval to configured allow-lists where supported.
 - Never log or return API keys, uploaded document contents, or trial data unintentionally.
 - Error responses never expose stack traces, queries, exception strings, or internals; current broad exception details are `(legacy)`.
+- API boundaries translate custom service exceptions into allow-listed, fixed public messages; never return `str(error)`, `repr(error)`, or interpolated exception text as an API response.
 - CORS must use explicit configured origins outside local development; wildcard CORS is `(legacy)`.
 - Passwords use Argon2id hashes and are never stored, logged, or returned in plaintext; unknown-account login performs a dummy password verification.
 - Access tokens use Ed25519 signatures, an explicit algorithm allow-list, required issuer/audience/time/type claims, and short expiry.

@@ -127,7 +127,10 @@ class FakeInvitationService:
         self.invitation.created_at = NOW
 
     async def create_invitation(self, *_args: object) -> tuple[Invitation, str]:
-        return self.invitation, "https://app.example.com/invitations/accept?token=secret"
+        return (
+            self.invitation,
+            "https://app.example.com/invitations/accept?token=secret",
+        )
 
     async def list_invitations(self, *_args: object) -> list[Invitation]:
         return [self.invitation]
@@ -151,7 +154,9 @@ class FakeInvitationService:
 def api_context(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     organization_service = FakeOrganizationService()
     invitation_service = FakeInvitationService(organization_service)
-    monkeypatch.setattr(routes, "OrganizationService", lambda *_args: organization_service)
+    monkeypatch.setattr(
+        routes, "OrganizationService", lambda *_args: organization_service
+    )
     monkeypatch.setattr(routes, "InvitationService", lambda *_args: invitation_service)
     app.dependency_overrides[get_current_account_id] = lambda: ACCOUNT_ID
     app.dependency_overrides[get_database_runtime] = lambda: FakeDatabaseRuntime()
@@ -180,7 +185,9 @@ def test_missing_bearer_token_is_generic_unauthorized() -> None:
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-def test_organization_free_then_create_list_and_read(api_context: dict[str, Any]) -> None:
+def test_organization_free_then_create_list_and_read(
+    api_context: dict[str, Any],
+) -> None:
     client = api_context["client"]
 
     created = client.post("/v1/organizations", json={"name": "  Research Team  "})
@@ -217,7 +224,9 @@ def test_membership_updates_and_errors_are_stable(api_context: dict[str, Any]) -
     assert conflict.status_code == 409
 
 
-def test_invitation_routes_return_secret_only_on_creation(api_context: dict[str, Any]) -> None:
+def test_invitation_routes_return_secret_only_on_creation(
+    api_context: dict[str, Any],
+) -> None:
     client = api_context["client"]
     created = client.post(
         f"/v1/organizations/{ORGANIZATION_ID}/invitations",
@@ -238,6 +247,17 @@ def test_invitation_routes_return_secret_only_on_creation(api_context: dict[str,
     assert "token_hash" not in listed.text
     assert accepted.json()["account_id"] == str(ACCOUNT_ID)
     assert revoked.status_code == 204
+
+
+def test_service_exception_text_is_not_returned(api_context: dict[str, Any]) -> None:
+    response = api_context["client"].post(
+        "/v1/organization-invitations/accept",
+        json={"token": "duplicate"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Invitation conflicts with organization state"}
+    assert "already belongs" not in response.text
 
 
 def test_validation_never_echoes_invitation_secret(api_context: dict[str, Any]) -> None:

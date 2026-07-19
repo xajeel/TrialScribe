@@ -5,14 +5,10 @@ from functools import lru_cache
 
 from pwdlib import PasswordHash
 
-MIN_PASSWORD_LENGTH = 15
-MAX_PASSWORD_LENGTH = 128
+from trialscribe_auth.utils.constant import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from trialscribe_auth.utils.exceptions import InvalidPasswordError
 
 _PASSWORD_HASH = PasswordHash.recommended()
-
-
-class InvalidPasswordError(ValueError):
-    """A password does not satisfy the public account contract."""
 
 
 def validate_password(password: str) -> str:
