@@ -28,10 +28,12 @@ invalid value is replaced. The response exposes the same ID for tracing.
 Request and response bodies are streamed instead of buffered. Upstream response
 status, safe headers, and repeated `Set-Cookie` headers are preserved. The gateway
 does not retry requests: an unavailable upstream returns `503`, and an upstream
-timeout returns `504`. Missing or invalid authentication returns `401`; a missing,
-malformed, or non-UUID organization context returns `422`; and a valid organization
-for which the user lacks membership returns `403`. Error responses use fixed public
-messages and do not expose internal exception details.
+timeout before response bytes begin returns `504`. If a timeout occurs after streaming
+has begun, HTTP cannot replace the status already sent; the gateway closes the upstream
+response and aborts the incomplete stream without exposing the HTTP client error. Missing
+or invalid authentication returns `401`; a missing, malformed, or non-UUID organization
+context returns `422`; and a valid organization for which the user lacks membership returns
+`403`. Error responses use fixed public messages and do not expose internal exception details.
 
 ## Run locally
 

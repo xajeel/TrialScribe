@@ -36,6 +36,13 @@ class ChunkStream(httpx.AsyncByteStream):
         self.closed = True
 
 
+class TimeoutStream(ChunkStream):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+        raise httpx.ReadTimeout("private stream detail")
+
+
 def gateway_settings() -> GatewaySettings:
     public_key = Ed25519PrivateKey.generate().public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -82,6 +89,29 @@ def proxy_app(upstream_client: httpx.AsyncClient) -> FastAPI:
         )
 
     return application
+
+
+def proxy_request() -> Request:
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/proxy/resource",
+            "raw_path": b"/proxy/resource",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 50000),
+            "server": ("gateway.local", 80),
+        },
+        receive,
+    )
+    request.state.request_id = REQUEST_ID
+    return request
 
 
 @pytest.mark.anyio
@@ -169,6 +199,46 @@ async def test_proxy_translates_transport_failures(
                     await client.get("/proxy/resource")
 
     assert str(captured.value) == ""
+
+
+@pytest.mark.anyio
+async def test_proxy_maps_timeout_before_first_body_chunk_and_closes() -> None:
+    stream = TimeoutStream()
+
+    async def upstream(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        proxy = GatewayProxy(client, gateway_settings())
+        with pytest.raises(UpstreamTimeoutError) as captured:
+            await proxy.forward(proxy_request(), ProxyTarget.AUTH, "/resource")
+
+    assert str(captured.value) == ""
+    assert stream.closed
+
+
+@pytest.mark.anyio
+async def test_proxy_sanitizes_late_body_timeout_and_closes() -> None:
+    stream = TimeoutStream(b"started")
+
+    async def upstream(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        proxy = GatewayProxy(client, gateway_settings())
+        response = await proxy.forward(
+            proxy_request(),
+            ProxyTarget.AUTH,
+            "/resource",
+        )
+        iterator = response.body_iterator
+
+        assert await anext(iterator) == b"started"
+        with pytest.raises(UpstreamTimeoutError) as captured:
+            await anext(iterator)
+
+    assert str(captured.value) == ""
+    assert stream.closed
 
 
 @pytest.mark.anyio

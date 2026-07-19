@@ -21,7 +21,11 @@ from trialscribe_gateway.api.routes import (
 from trialscribe_gateway.config import GatewaySettings
 from trialscribe_gateway.services.organization_access import OrganizationAccessService
 from trialscribe_gateway.utils.enum import ProxyTarget
-from trialscribe_gateway.utils.exceptions import InvalidAccessTokenError
+from trialscribe_gateway.utils.exceptions import (
+    InvalidAccessTokenError,
+    UpstreamTimeoutError,
+    UpstreamUnavailableError,
+)
 
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000071")
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000072")
@@ -290,3 +294,28 @@ async def test_membership_service_forwards_token_and_request_id() -> None:
     assert request.url.path == f"/v1/organizations/{ORGANIZATION_ID}"
     assert request.headers["authorization"] == "Bearer signed-token"
     assert request.headers["x-request-id"] == str(REQUEST_ID)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("failure_type", "expected_type"),
+    [
+        (httpx.ConnectError, UpstreamUnavailableError),
+        (httpx.ReadTimeout, UpstreamTimeoutError),
+    ],
+)
+async def test_membership_service_classifies_transport_failures(
+    failure_type: type[httpx.RequestError],
+    expected_type: type[Exception],
+) -> None:
+    async def user_service(request: httpx.Request) -> httpx.Response:
+        raise failure_type("private membership detail", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(user_service)) as client:
+        with pytest.raises(expected_type) as captured:
+            await OrganizationAccessService(
+                client,
+                gateway_settings(),
+            ).membership_status("signed-token", ORGANIZATION_ID, REQUEST_ID)
+
+    assert str(captured.value) == ""

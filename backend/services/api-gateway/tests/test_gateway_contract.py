@@ -293,3 +293,35 @@ def test_upstream_failures_are_fixed_safe_and_not_retried(
     assert "private-upstream-secret" not in response.text
     assert "client-secret" not in response.text
     assert UUID(response.headers["x-request-id"])
+
+
+@pytest.mark.parametrize("path", ["/v1/ai/sessions", "/v1/jobs/job-one"])
+def test_membership_timeouts_are_safe_504_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    settings, token = settings_and_token()
+    attempts = 0
+    request_id = str(uuid4())
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        assert request.url.host == "user.internal"
+        raise httpx.ReadTimeout("private membership detail", request=request)
+
+    with assembled_client(monkeypatch, settings, handler) as client:
+        response = client.post(
+            path,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Organization-ID": str(ORGANIZATION_ID),
+                "X-Request-ID": request_id,
+            },
+        )
+
+    assert attempts == 1
+    assert response.status_code == 504
+    assert response.json() == {"detail": "Service request timed out"}
+    assert response.headers["x-request-id"] == request_id
+    assert "private membership detail" not in response.text

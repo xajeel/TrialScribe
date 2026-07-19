@@ -9,7 +9,10 @@ from trialscribe_gateway.utils.constant import (
     AUTHORIZATION_HEADER,
     REQUEST_ID_HEADER,
 )
-from trialscribe_gateway.utils.exceptions import UpstreamUnavailableError
+from trialscribe_gateway.utils.exceptions import (
+    UpstreamTimeoutError,
+    UpstreamUnavailableError,
+)
 
 
 class OrganizationAccessService:
@@ -41,6 +44,8 @@ class OrganizationAccessService:
                     REQUEST_ID_HEADER: str(request_id),
                 },
             )
+        except httpx.TimeoutException:
+            raise UpstreamTimeoutError from None
         except httpx.RequestError:
             raise UpstreamUnavailableError from None
         if response.status_code >= 500:

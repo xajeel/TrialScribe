@@ -119,6 +119,13 @@ It preserves the downstream status, response body, safe headers, content type, a
 network hop. Requests are not automatically retried, because repeating registration,
 invitation, upload, or other writes could perform the same action twice.
 
+The gateway waits for at most the first upstream body chunk before starting the browser
+response. If that first chunk times out, the gateway can still return the fixed `504` response.
+After any response bytes have reached the browser, HTTP does not allow changing the status to
+`504`; a later timeout therefore closes the upstream response and aborts the incomplete stream
+with no HTTPX exception details exposed. Only the first chunk is prefetched, so successful
+large responses remain streamed instead of being buffered in gateway memory.
+
 ## Safe errors
 
 | Status | Meaning |

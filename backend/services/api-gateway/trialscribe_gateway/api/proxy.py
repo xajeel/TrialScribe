@@ -1,10 +1,10 @@
 """Streaming reverse-proxy transport for internal services."""
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 import httpx
 from fastapi import Request, Response
-from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 from trialscribe_gateway.config import GatewaySettings
@@ -32,6 +32,7 @@ _REQUEST_EXCLUDED_HEADERS = frozenset(
     }
 )
 _RESPONSE_EXCLUDED_HEADERS = frozenset({"content-length"})
+_EMPTY_STREAM = object()
 
 
 def _connection_headers(headers: httpx.Headers) -> set[str]:
@@ -40,6 +41,43 @@ def _connection_headers(headers: httpx.Headers) -> set[str]:
         for item in headers.get("connection", "").split(",")
         if item.strip()
     }
+
+
+async def _first_response_chunk(
+    iterator: AsyncIterator[bytes],
+    response: httpx.Response,
+) -> bytes | object:
+    try:
+        return await anext(iterator)
+    except StopAsyncIteration:
+        return _EMPTY_STREAM
+    except httpx.TimeoutException:
+        await response.aclose()
+        raise UpstreamTimeoutError from None
+    except httpx.RequestError:
+        await response.aclose()
+        raise UpstreamUnavailableError from None
+    except BaseException:
+        await response.aclose()
+        raise
+
+
+async def _guarded_response_stream(
+    first_chunk: bytes | object,
+    iterator: AsyncIterator[bytes],
+    response: httpx.Response,
+) -> AsyncIterator[bytes]:
+    try:
+        if first_chunk is not _EMPTY_STREAM:
+            yield first_chunk  # type: ignore[misc]
+        async for chunk in iterator:
+            yield chunk
+    except httpx.TimeoutException:
+        raise UpstreamTimeoutError from None
+    except httpx.RequestError:
+        raise UpstreamUnavailableError from None
+    finally:
+        await response.aclose()
 
 
 class GatewayProxy:
@@ -99,10 +137,18 @@ class GatewayProxy:
         except httpx.RequestError:
             raise UpstreamUnavailableError from None
 
+        response_iterator = upstream_response.aiter_raw()
+        first_chunk = await _first_response_chunk(
+            response_iterator,
+            upstream_response,
+        )
         response = StreamingResponse(
-            upstream_response.aiter_raw(),
+            _guarded_response_stream(
+                first_chunk,
+                response_iterator,
+                upstream_response,
+            ),
             status_code=upstream_response.status_code,
-            background=BackgroundTask(upstream_response.aclose),
         )
         response_excluded = (
             HOP_BY_HOP_HEADERS
