@@ -1,69 +1,87 @@
 # TrialScribe — Architecture
 
-## Current system
+Platform-level overview. The AI pipeline — by far the largest subsystem — has its own document:
+[`ai-engine-architecture.md`](ai-engine-architecture.md).
 
-TrialScribe's core is a LangGraph state machine with three sequential nodes, orchestrated per
-user session:
+## Shipped services
 
-1. **Planner** (`trialscribe_ai/agents/planner.py`) — takes the user's query and a summary of
-   the uploaded trial-design JSON, and produces a list of ICH M11 protocol sections to write.
-2. **Researcher** (`trialscribe_ai/agents/researcher.py`) — for each section, generates search
-   queries and pulls supporting evidence from two sources:
-   - **PubMed** (`trialscribe_ai/retrieval/pubmed.py`) via the NCBI E-utilities API.
-   - **Tavily web search** (`trialscribe_ai/retrieval/tavily.py`), restricted to an allow-list
-     of trusted domains (`trialscribe_ai/config/allowed_websites.yml`).
+| Service | Package | Responsibility |
+|---------|---------|----------------|
+| `api-gateway` | `trialscribe_gateway` | Single entry point; authenticates requests, propagates trusted identity, organization context, and one correlation ID per user action |
+| `auth-service` | `trialscribe_auth` | Local accounts, Ed25519 access tokens, rotated and revocable refresh tokens |
+| `user-service` | `trialscribe_user` | Organizations, memberships, RBAC, invitations |
+| `ai-engine` | `trialscribe_ai` | Conversation workspaces today; document, section, and generation APIs as the roadmap lands |
+| `worker-service` | `trialscribe_worker` | Health boundary today; the execution path for all AI work from roadmap feature 13 onward |
+| `database` (package) | `trialscribe_db` | Shared PostgreSQL configuration, model conventions, Alembic migrations, async transaction runtime |
 
-   Retrieved evidence is chunked and embedded into a FAISS vector store
-   (`trialscribe_ai/storage/evidence_db.py`), which also stores user-uploaded supporting PDFs
-   and the trial-design JSON summary.
-3. **Writer** (`trialscribe_ai/agents/writer.py`) — for each section, retrieves the most
-   relevant chunks from the FAISS stores (`trialscribe_ai/retrieval/retriever.py`) and prompts
-   an LLM to draft the section text, citing sources.
+Local infrastructure — PostgreSQL 18, Redis, Kafka in KRaft mode, and ChromaDB — runs from
+the `infrastructure` Compose profile.
 
-State (`AgentState` in `trialscribe_ai/models/schemas.py`) flows through the graph: query →
-sections → written texts.
+Roadmap features 1–7 are shipped: platform skeleton, local runtime infrastructure, the Postgres
+data foundation, authentication, organization RBAC, the gateway, and conversation workspaces.
+See `.sdlc/ROADMAP.md` for the full sequence and `.sdlc/STATE.md` for shipped dates.
 
-### Session model
+## Request and execution paths
 
-The FastAPI service (`trialscribe_ai/api/app.py`, `trialscribe_ai/api/sessions.py`) keeps
-per-session state in memory: an `EvidenceDatabase` instance, a compiled agent graph, uploaded
-document paths, and the trial-design summary. Sessions expire after 2 hours of inactivity via
-a background cleanup task. This in-memory model is intentionally simple for a single-instance
-deployment — see the Roadmap below for how it evolves.
+```mermaid
+flowchart LR
+    UI["React SPA"] --> GW["api-gateway"]
+    GW --> AUTH["auth-service"]
+    GW --> USER["user-service"]
+    GW --> AI["ai-engine"]
+    GW --> WRK["worker-service"]
+    AI -- "queues work" --> K[("Kafka")]
+    K --> WRK
+    AUTH & USER & AI --> PG[("PostgreSQL")]
+    AI & WRK --> RD[("Redis")]
+    WRK --> PG
+    WRK --> CH[("ChromaDB")]
+```
 
-### Interim frontend
+The separation that matters: **the API path accepts and reads; the worker path executes.** No
+long-running or provider-dependent work happens inside an HTTP request. This is what makes
+progress reporting, cancellation, retry, restart-safety, and horizontal scaling possible.
 
-`frontend/streamlit-ui` is a thin Streamlit app that drives the same agent pipeline directly
-(without going through the FastAPI session API) for local demos and manual testing.
+## Data
 
-### Repository tooling structure
+One PostgreSQL instance, one `trialscribe` schema, one Alembic migration history owned by
+`backend/packages/database`. Every tenant-scoped table carries `organization_id`, and child
+tables reference parents by composite key including the tenant column, so a mis-scoped row is
+unrepresentable rather than merely unlikely.
 
-`backend/` is a self-contained uv workspace: `backend/pyproject.toml` is the workspace root,
-with `services/ai-engine` as its sole member. `frontend/streamlit-ui` is deliberately **not**
-part of that workspace — it's a standalone uv project with its own lockfile, depending on
-`trialscribe-ai` via an editable path dependency (`../../backend/services/ai-engine`). This
-keeps `backend/` purely Python-tooled and `frontend/` free to become a Node/React project
-without the two toolchains ever needing to share a workspace root.
+ChromaDB is the only vector index, holding chunk IDs, embeddings, and tenant-scope metadata —
+never chunk text. PostgreSQL remains the source of record for chunk content and provenance, so
+vectors are always rebuildable from it. Redis holds ephemeral coordination — job progress,
+locks, rate limits, caches — and is always reconstructible from PostgreSQL. The full design,
+including why chunk content is never served from Chroma, is in
+[`ai-engine-architecture.md`](ai-engine-architecture.md).
 
-One consequence: because it resolves its own dependency graph independently, `ai-engine`'s
-`pyproject.toml` pins upper bounds on every dependency (not just lower bounds) so a fresh
-resolve in either project lands on the same tested version set instead of drifting apart.
+## Frontend
 
-## Roadmap
+`frontend/web` is the production React + TypeScript SPA, and roadmap feature 8 builds it out
+into an authenticated shell. It moved ahead of the AI pipeline in the sequence specifically so
+the platform becomes testable by hand early; the reasoning is recorded in the roadmap.
 
-The monorepo layout anticipates the following services as independent, addable units:
+`frontend/streamlit-ui` is an interim demo interface that drives the legacy AI pipeline
+directly. It is explicitly out of v1 as a supported frontend and is retired once feature 11
+lands.
 
-- **`auth-service`** — JWT-based authentication and RBAC authorization, so protocol generation
-  can be gated per user/organization instead of being open by session ID alone.
-- **`user-service`** — persistent users, accounts, and organizations backed by PostgreSQL,
-  replacing the in-memory `ACTIVE_SESSIONS` dict with durable session/user records.
-- **`worker-service`** — background job execution (e.g. Celery/Redis or ARQ) so long-running
-  protocol generation runs outside the request/response cycle, with status polling instead of
-  a blocking `generate-report` call.
-- **`frontend/web`** — a React + TypeScript SPA replacing the Streamlit UI as the primary
-  frontend, talking to the AI engine (and eventually the other services) over HTTP.
-- **API gateway** — once multiple backend services exist, a gateway/reverse proxy in front of
-  them for unified routing, auth enforcement, and rate limiting.
+## Repository tooling
 
-Each planned service currently has a `README.md` describing its intended responsibility and
-API surface, with `Status: planned` — no stub application code exists until it's built.
+`backend/` is a uv workspace: `backend/pyproject.toml` is the root, with each service and the
+shared database package as members. Use `uv sync --all-packages` — plain `uv sync` resolves only
+the root and leaves member packages unavailable.
+
+`frontend/web` is an npm project. `frontend/streamlit-ui` is deliberately outside the backend
+workspace — a standalone uv project with its own lockfile depending on `trialscribe-ai` by
+editable path. This keeps `backend/` purely Python-tooled and `frontend/` free to be
+Node-tooled without the two toolchains sharing a workspace root.
+
+Because `streamlit-ui` resolves its own dependency graph independently, `ai-engine`'s
+`pyproject.toml` pins upper bounds on every dependency, so a fresh resolve in either project
+lands on the same tested version set instead of drifting apart.
+
+## Conventions
+
+Exact version pins, directory ownership, style rules, the security baseline, and AI-engine
+engineering rules live in `.sdlc/CRAFT.md`. That file is authoritative; this one is orientation.

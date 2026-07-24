@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: pgvector/pgvector:0.8.2-pg18-trixie
+    # 0.8.3 fixed possible index corruption with HNSW vacuuming; 0.8.4 fixed
+    # HNSW graph-repair and insert-during-vacuum errors. Do not downgrade below 0.8.4.
+    image: pgvector/pgvector:0.8.5-pg18-trixie
     profiles:
       - infrastructure
     environment:
@@ -72,6 +74,21 @@ services:
       start_period: 30s
       retries: 20
 
+  chromadb:
+    image: chromadb/chroma:1.5.3
+    profiles:
+      - infrastructure
+    ports:
+      - "127.0.0.1:${CHROMA_PORT}:8000"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v2/heartbeat || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+
   ai-engine:
     build:
       context: .
@@ -96,3 +113,4 @@ volumes:
   postgres_data:
   redis_data:
   kafka_data:
+  chroma_data:
