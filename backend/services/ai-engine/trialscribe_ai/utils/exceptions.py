@@ -29,6 +29,26 @@ class InvalidCursorError(AIEngineError):
     """A pagination cursor could not be validated."""
 
 
+class DocumentNotFoundError(AIEngineError):
+    """The document is absent or outside the caller's scope."""
+
+
+class UnsupportedDocumentTypeError(AIEngineError):
+    """An uploaded document's declared type or content is not accepted."""
+
+
+class DocumentTooLargeError(AIEngineError):
+    """An uploaded document exceeds the configured size limit."""
+
+
+class InvalidTrialDataError(AIEngineError):
+    """Uploaded trial data is not a JSON object."""
+
+
+class EmptyDocumentError(AIEngineError):
+    """An uploaded document has no content."""
+
+
 class SessionNotFoundError(AIEngineError):
     """The requested session does not exist."""
 

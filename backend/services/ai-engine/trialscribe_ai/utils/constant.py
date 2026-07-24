@@ -30,6 +30,21 @@ INVALID_ORGANIZATION_CONTEXT_DETAIL = "Invalid organization context"
 INTERNAL_ACCOUNT_ID_HEADER = "X-TrialScribe-Account-ID"
 INTERNAL_ORGANIZATION_ID_HEADER = "X-TrialScribe-Organization-ID"
 
+# Document ingestion
+DEFAULT_DOCUMENT_MAX_SIZE_BYTES = 10_485_760
+FILENAME_MAX_LENGTH = 255
+ALLOWED_DOCUMENT_CONTENT_TYPES = frozenset(
+    {"application/pdf", "text/plain", "text/markdown"}
+)
+TRIAL_DATA_CONTENT_TYPE = "application/json"
+PDF_MAGIC = b"%PDF-"
+
+DOCUMENT_NOT_FOUND_DETAIL = "Document not found"
+UNSUPPORTED_DOCUMENT_TYPE_DETAIL = "Unsupported document type"
+DOCUMENT_TOO_LARGE_DETAIL = "Document exceeds the maximum allowed size"
+INVALID_TRIAL_DATA_DETAIL = "Trial data must be a JSON object"
+EMPTY_DOCUMENT_DETAIL = "Uploaded document is empty"
+
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 ALLOWED_WEBSITES_FILE = CONFIG_DIR / "allowed_websites.yml"
 
