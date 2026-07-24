@@ -1,11 +1,22 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+
+import { ProtectedRoute } from "./auth/ProtectedRoute";
+import { AuthPage } from "./pages/AuthPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { LandingPage } from "./pages/LandingPage";
+import { ProfilePage } from "./pages/ProfilePage";
+
 export default function App() {
   return (
-    <main className="shell">
-      <section className="shell__card" aria-labelledby="platform-title">
-        <p className="shell__eyebrow">Clinical research workspace</p>
-        <h1 id="platform-title">TrialScribe</h1>
-        <p className="shell__status">The platform shell is ready.</p>
-      </section>
-    </main>
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<AuthPage key="signin" mode="signin" />} />
+      <Route path="/signup" element={<AuthPage key="signup" mode="signup" />} />
+      <Route element={<ProtectedRoute />}>
+        <Route path="/workspace" element={<DashboardPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
