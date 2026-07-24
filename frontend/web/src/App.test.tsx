@@ -1,14 +1,43 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import App from "./App";
+import { tokenStore } from "./api/client";
+import { renderApp } from "./test/renderApp";
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 describe("App", () => {
-  it("renders the platform-ready shell", () => {
-    const markup = renderToStaticMarkup(<App />);
+  beforeEach(() => {
+    tokenStore.clear();
+    localStorage.clear();
+  });
 
-    expect(markup).toContain("<h1");
-    expect(markup).toContain("TrialScribe");
-    expect(markup).toContain("The platform shell is ready.");
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the landing page to anonymous visitors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(401, { detail: "Invalid authentication credentials" }),
+      ),
+    );
+
+    renderApp();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /keep the answer on record/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Get started" }),
+    ).toBeInTheDocument();
   });
 });
