@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
@@ -42,6 +43,27 @@ def _service(runtime_session: AsyncSession) -> DocumentService:
         ConversationRepository(runtime_session),
         DocumentRepository(runtime_session),
     )
+
+
+def _content_disposition(filename: str) -> str:
+    sanitized = "".join(
+        character
+        for character in filename
+        if ord(character) >= 32 and ord(character) != 127
+    )
+    if not sanitized:
+        sanitized = "download"
+    fallback = "".join(
+        character
+        if character.isascii()
+        and (character.isalnum() or character in "._- ()")
+        else "_"
+        for character in sanitized
+    ).strip()
+    if not fallback.strip("._"):
+        fallback = "download"
+    encoded = quote(sanitized, safe="")
+    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 @router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
@@ -128,7 +150,7 @@ async def download_document(
     return Response(
         content=document.content,
         media_type=document.content_type,
-        headers={"Content-Disposition": f'attachment; filename="{document.filename}"'},
+        headers={"Content-Disposition": _content_disposition(document.filename)},
     )
 
 

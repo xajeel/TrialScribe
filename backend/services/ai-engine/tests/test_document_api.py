@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 import pytest
@@ -126,6 +127,57 @@ def test_list_get_content_and_delete(
     assert content.headers["content-type"].startswith("application/pdf")
     assert "paper.pdf" in content.headers["content-disposition"]
     assert deleted.status_code == 204
+
+
+def test_download_encodes_unicode_filename(
+    api_context: tuple[TestClient, FakeDocumentService],
+) -> None:
+    client, service = api_context
+    service.document.filename = "研究📄.pdf"
+
+    response = client.get(
+        f"/conversations/{CONVERSATION_ID}/documents/{DOCUMENT_ID}/content"
+    )
+
+    assert response.status_code == 200
+    encoded = quote(service.document.filename, safe="")
+    assert f"filename*=UTF-8''{encoded}" in response.headers["content-disposition"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "fallback", "encoded"),
+    [
+        (
+            'report "draft".pdf',
+            "report _draft_.pdf",
+            "report%20%22draft%22.pdf",
+        ),
+        (
+            "report\r\nX-Injected: yes.pdf",
+            "reportX-Injected_ yes.pdf",
+            "reportX-Injected%3A%20yes.pdf",
+        ),
+    ],
+)
+def test_download_sanitizes_unsafe_filename_characters(
+    api_context: tuple[TestClient, FakeDocumentService],
+    filename: str,
+    fallback: str,
+    encoded: str,
+) -> None:
+    client, service = api_context
+    service.document.filename = filename
+
+    response = client.get(
+        f"/conversations/{CONVERSATION_ID}/documents/{DOCUMENT_ID}/content"
+    )
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert f'filename="{fallback}"' in disposition
+    assert f"filename*=UTF-8''{encoded}" in disposition
+    assert "\r" not in disposition
+    assert "\n" not in disposition
 
 
 def test_invalid_kind_is_rejected(

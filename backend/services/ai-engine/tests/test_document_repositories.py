@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -79,3 +80,4 @@ def test_document_page_uses_limit_plus_one_and_deterministic_cursor() -> None:
     assert _decode_cursor(cursor) == (documents[1].created_at, documents[1].id)
     statement = session.scalars.await_args.args[0]
     assert statement._limit_clause.value == 3
+    assert re.search(r"\bdocuments\.content\b", str(statement)) is None

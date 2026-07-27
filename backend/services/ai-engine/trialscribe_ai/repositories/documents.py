@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from trialscribe_ai.models.document import Document
 from trialscribe_ai.utils.exceptions import InvalidCursorError
@@ -68,9 +69,13 @@ class DocumentRepository:
         cursor: str | None,
         limit: int,
     ) -> tuple[list[Document], str | None]:
-        statement = select(Document).where(
-            Document.organization_id == organization_id,
-            Document.conversation_id == conversation_id,
+        statement = (
+            select(Document)
+            .options(defer(Document.content, raiseload=True))
+            .where(
+                Document.organization_id == organization_id,
+                Document.conversation_id == conversation_id,
+            )
         )
         if cursor is not None:
             created_at, document_id = _decode_cursor(cursor)
