@@ -225,6 +225,15 @@ def test_register_login_me_and_refresh_contract(api_context: dict[str, Any]) -> 
     assert any(
         "HttpOnly" in value and "SameSite=strict" in value for value in set_cookie
     )
+    refresh_cookie = next(
+        value for value in set_cookie if value.startswith("trialscribe_refresh=")
+    )
+    csrf_cookie = next(
+        value for value in set_cookie if value.startswith("trialscribe_csrf=")
+    )
+    assert "Path=/v1/auth" in refresh_cookie
+    assert "Path=/" in csrf_cookie
+    assert "Path=/v1/auth" not in csrf_cookie
     original_refresh = client.cookies.get("trialscribe_refresh")
     csrf = client.cookies.get("trialscribe_csrf")
     assert original_refresh is not None
@@ -445,10 +454,18 @@ def test_missing_csrf_rejects_and_clears_session_cookies(
     response = client.post("/v1/auth/refresh")
 
     assert response.status_code == 401
-    assert len(response.headers.get_list("set-cookie")) == 2
-    assert all(
-        "Max-Age=0" in value for value in response.headers.get_list("set-cookie")
+    cleared_cookies = response.headers.get_list("set-cookie")
+    assert len(cleared_cookies) == 2
+    assert all("Max-Age=0" in value for value in cleared_cookies)
+    refresh_cookie = next(
+        value for value in cleared_cookies if value.startswith("trialscribe_refresh=")
     )
+    csrf_cookie = next(
+        value for value in cleared_cookies if value.startswith("trialscribe_csrf=")
+    )
+    assert "Path=/v1/auth" in refresh_cookie
+    assert "Path=/" in csrf_cookie
+    assert "Path=/v1/auth" not in csrf_cookie
 
 
 def test_registration_validation_never_echoes_password(

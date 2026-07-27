@@ -23,6 +23,7 @@ MAX_PASSWORD_LENGTH = 128
 REFRESH_COOKIE = "trialscribe_refresh"
 CSRF_COOKIE = "trialscribe_csrf"
 AUTH_COOKIE_PATH = "/v1/auth"
+CSRF_COOKIE_PATH = "/"
 
 INVALID_AUTHENTICATION_DETAIL = "Invalid authentication credentials"
 INVALID_ACCOUNT_DETAIL = "Invalid account input"

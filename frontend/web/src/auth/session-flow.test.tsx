@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -106,6 +106,47 @@ describe("session flow", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+  });
+
+  it("ignores a stale bootstrap failure after a successful sign-in", async () => {
+    let resolveBootstrap: (response: Response) => void = () => undefined;
+    const bootstrap = new Promise<Response>((resolve) => {
+      resolveBootstrap = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input.toString());
+        const key = `${(init?.method ?? "GET").toUpperCase()} ${url.pathname}`;
+        if (key === "POST /v1/auth/refresh") {
+          return bootstrap;
+        }
+        if (key === "POST /v1/auth/login") {
+          return toResponse({ status: 200, body: TOKENS });
+        }
+        if (key === "GET /v1/auth/me") {
+          return toResponse({ status: 200, body: ACCOUNT });
+        }
+        if (key === "GET /v1/organizations") {
+          return toResponse({ status: 200, body: ORGS });
+        }
+        throw new Error(`unexpected request: ${key}`);
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderApp({ route: "/login" });
+    await user.type(screen.getByLabelText("Email"), "user@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct-horse-battery");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveBootstrap(toResponse(UNAUTHORIZED));
+      await bootstrap;
+    });
+
+    expect(screen.getByText(/Signed in as user@example.com/)).toBeInTheDocument();
   });
 
   it("creates an account from the signup form", async () => {
