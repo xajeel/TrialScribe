@@ -11,3 +11,14 @@ class ConversationStatus(StrEnum):
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
+
+
+class DocumentKind(StrEnum):
+    TRIAL_DATA = "trial_data"
+    RESEARCH_DOCUMENT = "research_document"
+
+
+class DocumentStatus(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    FAILED = "failed"

@@ -20,6 +20,7 @@ from trialscribe_db.config import DatabaseSettings
 from trialscribe_db.runtime import create_database_runtime
 
 from trialscribe_ai.api.conversations import router as conversation_router
+from trialscribe_ai.api.documents import router as document_router
 from trialscribe_ai.api.sessions import (
     QueryRequest,
     SessionResponse,
@@ -38,8 +39,12 @@ from trialscribe_ai.utils.constant import (
     CONVERSATION_ARCHIVED_DETAIL,
     CONVERSATION_NOT_FOUND_DETAIL,
     CONVERSATION_PERMISSION_DENIED_DETAIL,
+    DOCUMENT_NOT_FOUND_DETAIL,
+    DOCUMENT_TOO_LARGE_DETAIL,
     DOCUMENT_UPLOAD_FAILED_DETAIL,
+    EMPTY_DOCUMENT_DETAIL,
     INVALID_JSON_DETAIL,
+    INVALID_TRIAL_DATA_DETAIL,
     INVALID_CONVERSATION_INPUT_DETAIL,
     INVALID_CURSOR_DETAIL,
     MISSING_DOCUMENTS_DETAIL,
@@ -53,6 +58,7 @@ from trialscribe_ai.utils.constant import (
     SERVICE_UNAVAILABLE_DETAIL,
     TRIAL_PROCESSING_FAILED_DETAIL,
     UNSUPPORTED_DOCUMENT_DETAIL,
+    UNSUPPORTED_DOCUMENT_TYPE_DETAIL,
 )
 from trialscribe_ai.utils.exceptions import (
     AIEngineError,
@@ -60,10 +66,14 @@ from trialscribe_ai.utils.exceptions import (
     ConversationArchivedError,
     ConversationNotFoundError,
     ConversationPermissionDeniedError,
+    DocumentNotFoundError,
+    DocumentTooLargeError,
     DocumentUploadError,
+    EmptyDocumentError,
     InvalidJsonFileError,
     InvalidConversationInputError,
     InvalidCursorError,
+    InvalidTrialDataError,
     MissingDocumentsError,
     MissingTrialDataError,
     ReportGenerationError,
@@ -71,6 +81,7 @@ from trialscribe_ai.utils.exceptions import (
     SessionNotFoundError,
     TrialProcessingError,
     UnsupportedDocumentError,
+    UnsupportedDocumentTypeError,
 )
 
 trial_processor = TrialDataProcessor()
@@ -98,6 +109,7 @@ app: FastAPI = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(conversation_router)
+app.include_router(document_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,6 +138,16 @@ async def ai_engine_error_response(
         status_code, detail = 422, INVALID_CURSOR_DETAIL
     elif isinstance(error, InvalidConversationInputError):
         status_code, detail = 422, INVALID_CONVERSATION_INPUT_DETAIL
+    elif isinstance(error, DocumentNotFoundError):
+        status_code, detail = 404, DOCUMENT_NOT_FOUND_DETAIL
+    elif isinstance(error, UnsupportedDocumentTypeError):
+        status_code, detail = 415, UNSUPPORTED_DOCUMENT_TYPE_DETAIL
+    elif isinstance(error, DocumentTooLargeError):
+        status_code, detail = 413, DOCUMENT_TOO_LARGE_DETAIL
+    elif isinstance(error, InvalidTrialDataError):
+        status_code, detail = 422, INVALID_TRIAL_DATA_DETAIL
+    elif isinstance(error, EmptyDocumentError):
+        status_code, detail = 422, EMPTY_DOCUMENT_DETAIL
     elif isinstance(error, SessionNotFoundError):
         status_code, detail = 404, SESSION_NOT_FOUND_DETAIL
     elif isinstance(error, SessionExpiredError):

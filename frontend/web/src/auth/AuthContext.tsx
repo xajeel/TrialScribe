@@ -32,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [account, setAccount] = useState<Account | null>(null);
   const bootstrapped = useRef(false);
+  const authGeneration = useRef(0);
 
   const becomeAnonymous = useCallback(() => {
     tokenStore.clear();
@@ -49,25 +50,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     bootstrapped.current = true;
+    const generation = authGeneration.current;
     void (async () => {
       try {
         const tokens = await refresh();
+        if (generation !== authGeneration.current) {
+          return;
+        }
         tokenStore.set(tokens.access_token);
-        becomeAuthenticated(await fetchMe());
+        const nextAccount = await fetchMe();
+        if (generation === authGeneration.current) {
+          becomeAuthenticated(nextAccount);
+        }
       } catch {
-        becomeAnonymous();
+        if (generation === authGeneration.current) {
+          becomeAnonymous();
+        }
       }
     })();
   }, [becomeAnonymous, becomeAuthenticated]);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
-      const tokens = await login(email, password);
-      tokenStore.set(tokens.access_token);
+      const generation = ++authGeneration.current;
       try {
-        becomeAuthenticated(await fetchMe());
+        const tokens = await login(email, password);
+        tokenStore.set(tokens.access_token);
+        const nextAccount = await fetchMe();
+        if (generation === authGeneration.current) {
+          becomeAuthenticated(nextAccount);
+        }
       } catch (error) {
-        becomeAnonymous();
+        if (generation === authGeneration.current) {
+          becomeAnonymous();
+        }
         throw error;
       }
     },
@@ -75,12 +91,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    const generation = ++authGeneration.current;
     try {
       await logout();
     } catch {
       // Best-effort revoke; clear the client session regardless.
     }
-    becomeAnonymous();
+    if (generation === authGeneration.current) {
+      becomeAnonymous();
+    }
   }, [becomeAnonymous]);
 
   const authorizedFetch = useCallback<AuthorizedFetch>(

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from trialscribe_auth.api.app import app
 from trialscribe_auth.config import AuthSettings
 from trialscribe_auth.security.tokens import AccessTokenCodec
+from trialscribe_auth.utils.constant import AUTH_COOKIE_PATH, CSRF_COOKIE_PATH
 
 pytestmark = pytest.mark.integration
 
@@ -34,13 +35,13 @@ def select_session(client: TestClient, refresh_token: str, csrf_token: str) -> N
         "trialscribe_refresh",
         refresh_token,
         domain="testserver.local",
-        path="/v1/auth",
+        path=AUTH_COOKIE_PATH,
     )
     client.cookies.set(
         "trialscribe_csrf",
         csrf_token,
         domain="testserver.local",
-        path="/v1/auth",
+        path=CSRF_COOKIE_PATH,
     )
 
 

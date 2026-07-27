@@ -48,6 +48,7 @@ from trialscribe_auth.utils.constant import (
     AUTH_COOKIE_PATH,
     AUTHENTICATION_UNAVAILABLE_DETAIL,
     CSRF_COOKIE,
+    CSRF_COOKIE_PATH,
     INVALID_ACCOUNT_DETAIL,
     INVALID_AUTHENTICATION_DETAIL,
     REFRESH_COOKIE,
@@ -75,19 +76,20 @@ def _set_session_cookies(
     shared = {
         "secure": settings.auth_cookie_secure,
         "samesite": "strict",
-        "path": AUTH_COOKIE_PATH,
         "max_age": max_age,
     }
     response.set_cookie(
         REFRESH_COOKIE,
         credentials.refresh_token,
         httponly=True,
+        path=AUTH_COOKIE_PATH,
         **shared,
     )
     response.set_cookie(
         CSRF_COOKIE,
         credentials.csrf_token,
         httponly=False,
+        path=CSRF_COOKIE_PATH,
         **shared,
     )
 
@@ -102,7 +104,7 @@ def _clear_session_cookies(response: Response, settings: AuthSettings) -> None:
     )
     response.delete_cookie(
         CSRF_COOKIE,
-        path=AUTH_COOKIE_PATH,
+        path=CSRF_COOKIE_PATH,
         secure=settings.auth_cookie_secure,
         httponly=False,
         samesite="strict",
