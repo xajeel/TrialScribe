@@ -22,3 +22,14 @@ class DocumentStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     FAILED = "failed"
+
+
+class M11SectionStatus(StrEnum):
+    DRAFT = "draft"
+    DONE = "done"
+
+
+class M11RevisionAction(StrEnum):
+    REVISED = "revised"
+    DONE = "done"
+    REOPENED = "reopened"
