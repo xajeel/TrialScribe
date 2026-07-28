@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -30,6 +30,7 @@ class FakeConversationRepository:
         self.conversation = conversation
         self.grants = {OWNER_ID, COLLABORATOR_ID}
         self.last_locked = False
+        self.flush_calls = 0
 
     async def get_accessible(
         self,
@@ -47,6 +48,10 @@ class FakeConversationRepository:
         ):
             return None
         return self.conversation
+
+    async def flush(self, conversation: Conversation) -> Conversation:
+        self.flush_calls += 1
+        return conversation
 
 
 class FakeSectionRepository:
@@ -323,6 +328,53 @@ def test_done_reopen_and_revision_actions_form_a_guarded_state_machine() -> None
         "done",
         "reopened",
     ]
+
+
+def test_section_mutations_advance_conversation_activity() -> None:
+    service, conversation, conversations, _, _ = service_context()
+    initialize(service)
+
+    revised_at = NOW + timedelta(minutes=1)
+    section = asyncio.run(
+        service.revise_section(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=0,
+            instructions=None,
+            content="Ready",
+            now=revised_at,
+        )
+    )
+    assert conversation.last_activity_at == revised_at
+
+    done_at = NOW + timedelta(minutes=2)
+    section = asyncio.run(
+        service.mark_done(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=section.current_revision,
+            now=done_at,
+        )
+    )
+    assert conversation.last_activity_at == done_at
+
+    reopened_at = NOW + timedelta(minutes=3)
+    asyncio.run(
+        service.reopen(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=section.current_revision,
+            now=reopened_at,
+        )
+    )
+    assert conversation.last_activity_at == reopened_at
+    assert conversations.flush_calls == 3
 
 
 def test_access_archive_missing_and_partial_workspace_rules_are_enforced() -> None:

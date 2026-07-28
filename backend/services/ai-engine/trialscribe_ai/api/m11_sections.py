@@ -36,6 +36,7 @@ from trialscribe_ai.schemas.m11_section import (
     M11SectionWorkspaceResponse,
 )
 from trialscribe_ai.services.m11_sections import M11SectionService
+from trialscribe_ai.utils.exceptions import M11SectionTransitionError
 
 router = APIRouter(tags=["m11-sections"])
 
@@ -58,9 +59,13 @@ def _section_response(section: object) -> M11SectionResponse:
 
 
 def _workspace_response(sections: list[object]) -> M11SectionWorkspaceResponse:
+    items = [_section_response(section) for section in sections]
+    catalog_versions = {item.catalog_version for item in items}
+    if len(catalog_versions) > 1:
+        raise M11SectionTransitionError
     return M11SectionWorkspaceResponse(
-        catalog_version=M11_CATALOG_VERSION,
-        items=[_section_response(section) for section in sections],
+        catalog_version=next(iter(catalog_versions), M11_CATALOG_VERSION),
+        items=items,
     )
 
 

@@ -203,6 +203,34 @@ def test_workspace_paths_are_scoped_transactional_and_initialization_is_idempote
     assert runtime.transactions == 4
 
 
+def test_workspace_reports_its_persisted_catalog_version(
+    api_context: tuple[TestClient, FakeM11SectionService, FakeDatabaseRuntime],
+) -> None:
+    client, service, _ = api_context
+    service.section.catalog_version = "ICH_M11_STEP_4_PREVIOUS"
+
+    response = client.get(f"/conversations/{CONVERSATION_ID}/m11-sections")
+
+    assert response.status_code == 200
+    assert response.json()["catalog_version"] == "ICH_M11_STEP_4_PREVIOUS"
+
+
+def test_workspace_rejects_inconsistent_persisted_catalog_versions(
+    api_context: tuple[TestClient, FakeM11SectionService, FakeDatabaseRuntime],
+) -> None:
+    section = routes._section_response(api_context[1].section)
+    inconsistent = section.model_copy(
+        update={
+            "catalog_version": "ICH_M11_STEP_4_DIFFERENT",
+            "section_number": "2",
+            "position": 2,
+        }
+    )
+
+    with pytest.raises(M11SectionTransitionError):
+        routes._workspace_response([section, inconsistent])
+
+
 def test_revise_done_reopen_and_revision_page_contracts(
     api_context: tuple[TestClient, FakeM11SectionService, FakeDatabaseRuntime],
 ) -> None:

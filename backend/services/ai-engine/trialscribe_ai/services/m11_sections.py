@@ -127,7 +127,7 @@ class M11SectionService:
             instructions,
             content,
         )
-        section = await self._locked_mutable_section(
+        conversation, section = await self._locked_mutable_section(
             organization_id,
             account_id,
             conversation_id,
@@ -141,6 +141,7 @@ class M11SectionService:
         if normalized_content is not None:
             section.content = normalized_content
         await self._record_action(
+            conversation,
             section,
             account_id,
             M11RevisionAction.REVISED,
@@ -159,7 +160,7 @@ class M11SectionService:
         now: datetime,
     ) -> M11Section:
         self._validate_expected_revision(expected_revision)
-        section = await self._locked_mutable_section(
+        conversation, section = await self._locked_mutable_section(
             organization_id,
             account_id,
             conversation_id,
@@ -171,7 +172,13 @@ class M11SectionService:
         section.status = M11SectionStatus.DONE.value
         section.completed_at = now
         section.completed_by_account_id = account_id
-        await self._record_action(section, account_id, M11RevisionAction.DONE, now)
+        await self._record_action(
+            conversation,
+            section,
+            account_id,
+            M11RevisionAction.DONE,
+            now,
+        )
         return section
 
     async def reopen(
@@ -185,7 +192,7 @@ class M11SectionService:
         now: datetime,
     ) -> M11Section:
         self._validate_expected_revision(expected_revision)
-        section = await self._locked_mutable_section(
+        conversation, section = await self._locked_mutable_section(
             organization_id,
             account_id,
             conversation_id,
@@ -198,6 +205,7 @@ class M11SectionService:
         section.completed_at = None
         section.completed_by_account_id = None
         await self._record_action(
+            conversation,
             section,
             account_id,
             M11RevisionAction.REOPENED,
@@ -237,7 +245,7 @@ class M11SectionService:
         account_id: UUID,
         conversation_id: UUID,
         section_number: str,
-    ) -> M11Section:
+    ) -> tuple[Conversation, M11Section]:
         conversation = await self._require_conversation(
             organization_id,
             account_id,
@@ -245,21 +253,25 @@ class M11SectionService:
             for_update=True,
         )
         self._require_mutable(conversation)
-        return await self._require_section(
+        section = await self._require_section(
             organization_id,
             conversation_id,
             section_number,
             for_update=True,
         )
+        return conversation, section
 
     async def _record_action(
         self,
+        conversation: Conversation,
         section: M11Section,
         account_id: UUID,
         action: M11RevisionAction,
         now: datetime,
     ) -> None:
+        conversation.last_activity_at = now
         section.current_revision += 1
+        await self._conversations.flush(conversation)
         await self._sections.flush(section)
         await self._revisions.append(section, account_id, action, now)
 
