@@ -7,3 +7,14 @@ export function listOrganizations(
 ): Promise<Organization[]> {
   return fetcher<Organization[]>("/v1/organizations");
 }
+
+/** Create an organization owned by the current account. */
+export function createOrganization(
+  fetcher: AuthorizedFetch,
+  name: string,
+): Promise<Organization> {
+  return fetcher<Organization>("/v1/organizations", {
+    method: "POST",
+    json: { name },
+  });
+}

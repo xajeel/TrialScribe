@@ -5,16 +5,20 @@ import {
   ErrorState,
   LoadingState,
 } from "../components/AsyncState";
+import { OrganizationInvitations } from "../components/OrganizationInvitations";
+import { OrganizationOnboarding } from "../components/OrganizationOnboarding";
 import { useAuth } from "../auth/useAuth";
 import { useOrganization } from "../org/useOrganization";
 
 export function ProfilePage() {
-  const { account, signOut } = useAuth();
+  const { account, authorizedFetch, signOut } = useAuth();
   const org = useOrganization();
 
   const ready = org.status === "ready";
   const memberOfOrg = ready && org.organizations.length > 0;
   const email = account?.email ?? "";
+  const activeOrganization =
+    org.organizations.find((item) => item.id === org.activeId) ?? null;
   const memberSince =
     account === null
       ? ""
@@ -112,6 +116,35 @@ export function ProfilePage() {
             </p>
           )}
         </section>
+
+        {ready && (
+          <section
+            className="card card--wide"
+            aria-labelledby="organization-access-card-title"
+          >
+            <h2 className="card__title" id="organization-access-card-title">
+              Organization access
+            </h2>
+            <OrganizationOnboarding />
+          </section>
+        )}
+
+        {activeOrganization !== null &&
+          (activeOrganization.role === "owner" ||
+            activeOrganization.role === "admin") && (
+            <section
+              className="card card--wide"
+              aria-labelledby="organization-invite-card-title"
+            >
+              <h2 className="card__title" id="organization-invite-card-title">
+                Invite collaborators to {activeOrganization.name}
+              </h2>
+              <OrganizationInvitations
+                organization={activeOrganization}
+                fetcher={authorizedFetch}
+              />
+            </section>
+          )}
 
         <section className="card" aria-labelledby="session-card-title">
           <h2 className="card__title" id="session-card-title">

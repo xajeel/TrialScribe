@@ -1,22 +1,49 @@
+import { useEffect, useMemo, useState } from "react";
+
+import type { M11Section } from "../api/types";
+import { useAuth } from "../auth/useAuth";
 import { AccountMenu } from "../components/AccountMenu";
 import { AppLayout } from "../components/AppLayout";
+import { AuthoringPane } from "../components/AuthoringPane";
 import {
   EmptyState,
   ErrorState,
   LoadingState,
 } from "../components/AsyncState";
-import { useAuth } from "../auth/useAuth";
+import { ConversationPane } from "../components/ConversationPane";
+import { OrganizationOnboarding } from "../components/OrganizationOnboarding";
+import { ResourcePane } from "../components/ResourcePane";
+import { SectionModal } from "../components/SectionModal";
 import { useOrganization } from "../org/useOrganization";
+import { useAuthoringWorkspace } from "../workspace/useAuthoringWorkspace";
 
 export function DashboardPage() {
-  const { account } = useAuth();
+  const { account, authorizedFetch } = useAuth();
   const org = useOrganization();
+  const [modalSectionId, setModalSectionId] = useState<string | null>(null);
+  const [modalOpener, setModalOpener] = useState<HTMLElement | null>(null);
 
   const ready = org.status === "ready";
   const memberOfOrg = ready && org.organizations.length > 0;
   const active = ready
     ? (org.organizations.find((item) => item.id === org.activeId) ?? null)
     : null;
+  const workspace = useAuthoringWorkspace(active?.id ?? null, authorizedFetch);
+  const modalSection = useMemo(
+    () =>
+      workspace.sections.find((item) => item.id === modalSectionId) ?? null,
+    [modalSectionId, workspace.sections],
+  );
+
+  useEffect(() => {
+    setModalSectionId(null);
+    setModalOpener(null);
+  }, [workspace.selectedConversationId]);
+
+  const openSection = (section: M11Section, opener: HTMLElement) => {
+    setModalSectionId(section.id);
+    setModalOpener(opener);
+  };
 
   const actions = (
     <>
@@ -39,58 +66,54 @@ export function DashboardPage() {
 
   return (
     <AppLayout actions={actions}>
-      <p className="eyebrow">Workspace</p>
-      <h1 className="display">Your research workspace</h1>
-      <p className="page-lead">Signed in as {account?.email}</p>
-
-      <div className="workspace-grid">
-        <section className="card" aria-labelledby="org-card-title">
-          <h2 className="card__title" id="org-card-title">
-            Active organization
-          </h2>
-          {org.status === "loading" && (
-            <LoadingState label="Loading your organizations…" />
-          )}
-          {org.status === "error" && (
-            <ErrorState
-              message="Could not load your organizations."
-              onRetry={org.reload}
-            />
-          )}
-          {ready && org.organizations.length === 0 && (
+      <div className="authoring-workspace-page">
+        <p className="workspace-session">Signed in as {account?.email}</p>
+        {org.status !== "ready" && (
+          <section className="workspace-entry-state" aria-label="Organizations">
+            {org.status === "error" ? (
+              <ErrorState
+                message="Could not load your organizations."
+                onRetry={org.reload}
+              />
+            ) : (
+              <LoadingState label="Loading your organizations…" />
+            )}
+          </section>
+        )}
+        {ready && !memberOfOrg && (
+          <section className="workspace-entry-state" aria-label="Organizations">
             <EmptyState
               title="No organizations yet"
-              description="You are not a member of any organization."
+              description="Create your first organization or join one with an invitation."
             />
-          )}
-          {active !== null && (
-            <div className="org-summary">
-              <p className="org-summary__name">{active.name}</p>
-              <span className="badge">{active.role}</span>
+            <OrganizationOnboarding />
+          </section>
+        )}
+        {active !== null && (
+          <>
+            <div className="authoring-workspace">
+              <ConversationPane workspace={workspace} />
+              <AuthoringPane workspace={workspace} />
+              <ResourcePane
+                workspace={workspace}
+                onOpenSection={openSection}
+              />
             </div>
-          )}
-        </section>
-
-        <section className="card" aria-labelledby="next-card-title">
-          <h2 className="card__title" id="next-card-title">
-            Next up
-          </h2>
-          <ul className="steps">
-            <li className="step step--done">
-              <span className="step__marker" aria-hidden="true" />
-              Account created
-            </li>
-            <li className={memberOfOrg ? "step step--done" : "step"}>
-              <span className="step__marker" aria-hidden="true" />
-              Join an organization
-            </li>
-            <li className="step">
-              <span className="step__marker" aria-hidden="true" />
-              Start your first conversation
-              <span className="tag">Coming soon</span>
-            </li>
-          </ul>
-        </section>
+            <SectionModal
+              section={modalSection}
+              returnFocusTo={modalOpener}
+              onClose={() => {
+                setModalSectionId(null);
+                setModalOpener(null);
+              }}
+            />
+          </>
+        )}
+        {ready && memberOfOrg && active === null && (
+          <section className="workspace-entry-state" aria-label="Organizations">
+            <LoadingState label="Loading your organizations…" />
+          </section>
+        )}
       </div>
     </AppLayout>
   );

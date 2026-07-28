@@ -45,8 +45,15 @@ export function readCookie(name: string): string | null {
 export interface RequestOptions {
   method?: string;
   json?: unknown;
+  body?: BodyInit;
+  headers?: HeadersInit;
   auth?: boolean;
   csrf?: boolean;
+}
+
+/** Build the public organization-selection header required by AI routes. */
+export function organizationHeaders(organizationId: string): HeadersInit {
+  return { "X-Organization-ID": organizationId };
 }
 
 /**
@@ -57,8 +64,12 @@ export async function apiFetch<T>(
   path: string,
   opts: RequestOptions = {},
 ): Promise<T> {
-  const headers = new Headers();
-  let body: string | undefined;
+  if (opts.json !== undefined && opts.body !== undefined) {
+    throw new TypeError("Request cannot contain both JSON and a raw body");
+  }
+
+  const headers = new Headers(opts.headers);
+  let body = opts.body;
   if (opts.json !== undefined) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(opts.json);
