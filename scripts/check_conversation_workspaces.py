@@ -14,7 +14,10 @@ from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "backend"
-INTEGRATION_TEST = "services/ai-engine/tests/test_conversation_integration.py"
+INTEGRATION_TESTS = (
+    "services/ai-engine/tests/test_conversation_integration.py",
+    "services/ai-engine/tests/test_m11_section_integration.py",
+)
 
 
 class ConversationCheckFailure(RuntimeError):
@@ -125,7 +128,8 @@ def migrate(environment: dict[str, str], redactions: tuple[str, ...]) -> None:
 
 def run_phase(
     phase: str,
-    state_file: Path,
+    conversation_state_file: Path,
+    m11_state_file: Path,
     environment: dict[str, str],
     redactions: tuple[str, ...],
 ) -> None:
@@ -133,7 +137,10 @@ def run_phase(
     phase_environment.update(
         TRIALSCRIBE_AI_CONVERSATION_INTEGRATION="1",
         TRIALSCRIBE_AI_CONVERSATION_PHASE=phase,
-        TRIALSCRIBE_AI_CONVERSATION_STATE_FILE=str(state_file),
+        TRIALSCRIBE_AI_CONVERSATION_STATE_FILE=str(conversation_state_file),
+        TRIALSCRIBE_AI_M11_INTEGRATION="1",
+        TRIALSCRIBE_AI_M11_PHASE=phase,
+        TRIALSCRIBE_AI_M11_STATE_FILE=str(m11_state_file),
     )
     run_command(
         [
@@ -143,7 +150,7 @@ def run_phase(
             "--package",
             "trialscribe-ai",
             "pytest",
-            INTEGRATION_TEST,
+            *INTEGRATION_TESTS,
             "-q",
         ],
         phase_environment,
@@ -158,15 +165,28 @@ def run_checks(project: ComposeProject) -> None:
     environment.update(DATABASE_URL=database_url)
 
     with tempfile.TemporaryDirectory(prefix="trialscribe-ai-test-") as temp_dir:
-        state_file = Path(temp_dir) / "conversation-state.json"
+        conversation_state_file = Path(temp_dir) / "conversation-state.json"
+        m11_state_file = Path(temp_dir) / "m11-state.json"
         migrate(environment, redactions)
-        run_phase("prepare", state_file, environment, redactions)
+        run_phase(
+            "prepare",
+            conversation_state_file,
+            m11_state_file,
+            environment,
+            redactions,
+        )
         project.capture("restart", "postgres")
         project.capture("up", "-d", "--wait", "--wait-timeout", "120", "postgres")
         database_url, restarted_redactions = database_connection(project)
         environment.update(DATABASE_URL=database_url)
         redactions = (*redactions, *restarted_redactions)
-        run_phase("verify", state_file, environment, redactions)
+        run_phase(
+            "verify",
+            conversation_state_file,
+            m11_state_file,
+            environment,
+            redactions,
+        )
 
     remaining = project.capture("ps", "--status", "exited", "--quiet")
     if remaining:
@@ -188,7 +208,10 @@ def main() -> int:
     except ConversationCheckFailure as error:
         print(f"Conversation checks failed: {error}", file=sys.stderr)
         return 1
-    print("Conversation isolation, history, restart, revocation, and cleanup checks passed.")
+    print(
+        "Conversation and M11 workspace isolation, history, restart, "
+        "revocation, and cleanup checks passed."
+    )
     return 0
 
 

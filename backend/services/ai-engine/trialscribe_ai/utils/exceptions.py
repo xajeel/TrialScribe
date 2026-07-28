@@ -49,6 +49,22 @@ class EmptyDocumentError(AIEngineError):
     """An uploaded document has no content."""
 
 
+class M11SectionNotFoundError(AIEngineError):
+    """The M11 section is absent or outside the caller's conversation."""
+
+
+class InvalidM11SectionInputError(AIEngineError):
+    """M11 section input failed a domain rule."""
+
+
+class M11SectionRevisionConflictError(AIEngineError):
+    """The section changed after the caller last read it."""
+
+
+class M11SectionTransitionError(AIEngineError):
+    """The requested section state transition is not allowed."""
+
+
 class SessionNotFoundError(AIEngineError):
     """The requested session does not exist."""
 

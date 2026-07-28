@@ -16,9 +16,19 @@ CONVERSATION_CONTENT_MAX_LENGTH = 20_000
 COLLABORATOR_LIMIT = 100
 DEFAULT_PAGE_LIMIT = 20
 MAX_PAGE_LIMIT = 100
+M11_INSTRUCTIONS_MAX_LENGTH = 20_000
+M11_CONTENT_MAX_LENGTH = 200_000
 
 TITLE_VALIDATION_MESSAGE = "Title must be 1 to 120 characters"
 MESSAGE_CONTENT_VALIDATION_MESSAGE = "Message must be 1 to 20000 characters"
+M11_INSTRUCTIONS_VALIDATION_MESSAGE = (
+    "Section instructions must be at most 20000 characters"
+)
+M11_CONTENT_VALIDATION_MESSAGE = "Section content must be at most 200000 characters"
+M11_SECTION_NOT_FOUND_DETAIL = "M11 section not found"
+INVALID_M11_SECTION_INPUT_DETAIL = "Invalid M11 section input"
+M11_SECTION_REVISION_CONFLICT_DETAIL = "M11 section revision conflict"
+M11_SECTION_TRANSITION_DETAIL = "M11 section transition is not allowed"
 CONVERSATION_NOT_FOUND_DETAIL = "Conversation not found"
 CONVERSATION_PERMISSION_DENIED_DETAIL = "Conversation permission denied"
 CONVERSATION_ARCHIVED_DETAIL = "Conversation is archived"

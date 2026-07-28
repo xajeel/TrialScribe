@@ -21,6 +21,7 @@ from trialscribe_db.runtime import create_database_runtime
 
 from trialscribe_ai.api.conversations import router as conversation_router
 from trialscribe_ai.api.documents import router as document_router
+from trialscribe_ai.api.m11_sections import router as m11_section_router
 from trialscribe_ai.api.sessions import (
     QueryRequest,
     SessionResponse,
@@ -44,11 +45,15 @@ from trialscribe_ai.utils.constant import (
     DOCUMENT_UPLOAD_FAILED_DETAIL,
     EMPTY_DOCUMENT_DETAIL,
     INVALID_JSON_DETAIL,
+    INVALID_M11_SECTION_INPUT_DETAIL,
     INVALID_TRIAL_DATA_DETAIL,
     INVALID_CONVERSATION_INPUT_DETAIL,
     INVALID_CURSOR_DETAIL,
     MISSING_DOCUMENTS_DETAIL,
     MISSING_TRIAL_DATA_DETAIL,
+    M11_SECTION_NOT_FOUND_DETAIL,
+    M11_SECTION_REVISION_CONFLICT_DETAIL,
+    M11_SECTION_TRANSITION_DETAIL,
     LIVENESS_STATUS,
     READINESS_STATUS,
     REPORT_GENERATION_FAILED_DETAIL,
@@ -71,11 +76,15 @@ from trialscribe_ai.utils.exceptions import (
     DocumentUploadError,
     EmptyDocumentError,
     InvalidJsonFileError,
+    InvalidM11SectionInputError,
     InvalidConversationInputError,
     InvalidCursorError,
     InvalidTrialDataError,
     MissingDocumentsError,
     MissingTrialDataError,
+    M11SectionNotFoundError,
+    M11SectionRevisionConflictError,
+    M11SectionTransitionError,
     ReportGenerationError,
     SessionExpiredError,
     SessionNotFoundError,
@@ -110,6 +119,7 @@ app: FastAPI = FastAPI(
 )
 app.include_router(conversation_router)
 app.include_router(document_router)
+app.include_router(m11_section_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -148,6 +158,14 @@ async def ai_engine_error_response(
         status_code, detail = 422, INVALID_TRIAL_DATA_DETAIL
     elif isinstance(error, EmptyDocumentError):
         status_code, detail = 422, EMPTY_DOCUMENT_DETAIL
+    elif isinstance(error, M11SectionNotFoundError):
+        status_code, detail = 404, M11_SECTION_NOT_FOUND_DETAIL
+    elif isinstance(error, InvalidM11SectionInputError):
+        status_code, detail = 422, INVALID_M11_SECTION_INPUT_DETAIL
+    elif isinstance(error, M11SectionRevisionConflictError):
+        status_code, detail = 409, M11_SECTION_REVISION_CONFLICT_DETAIL
+    elif isinstance(error, M11SectionTransitionError):
+        status_code, detail = 409, M11_SECTION_TRANSITION_DETAIL
     elif isinstance(error, SessionNotFoundError):
         status_code, detail = 404, SESSION_NOT_FOUND_DETAIL
     elif isinstance(error, SessionExpiredError):
