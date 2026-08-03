@@ -13,7 +13,7 @@ import {
   listConversations,
   renameConversation,
 } from "../api/conversations";
-import { listDocuments, uploadDocument } from "../api/documents";
+import { deleteDocument, listDocuments, uploadDocument } from "../api/documents";
 import {
   initializeM11Workspace,
   markM11SectionDone,
@@ -36,6 +36,7 @@ export type WorkspaceAction =
   | "renaming"
   | "sending"
   | "uploading"
+  | "removing"
   | "saving"
   | "transitioning";
 
@@ -66,6 +67,7 @@ export interface AuthoringWorkspaceController {
   rename: (title: string) => Promise<boolean>;
   appendInstruction: (content: string) => Promise<boolean>;
   upload: (kind: DocumentKind, file: File) => Promise<boolean>;
+  removeDocument: (documentId: string) => Promise<boolean>;
   saveSection: (instructions: string, content: string) => Promise<boolean>;
   markDone: () => Promise<boolean>;
   reopen: () => Promise<boolean>;
@@ -76,6 +78,7 @@ const PUBLIC_FAILURES = {
   rename: "Could not rename the conversation. Please try again.",
   message: "Could not save the instruction. Please try again.",
   upload: "Could not upload the document. Check the file and try again.",
+  remove: "Could not remove the document. Please try again.",
   section: "Could not save the section. Reload it and try again.",
   transition: "Could not change the section status. Please try again.",
 } as const;
@@ -84,6 +87,7 @@ const PUBLIC_FAILURES = {
 export function useAuthoringWorkspace(
   organizationId: string | null,
   fetcher: AuthorizedFetch,
+  initialConversationId: string | null = null,
 ): AuthoringWorkspaceController {
   const [conversationStatus, setConversationStatus] =
     useState<LoadStatus>("idle");
@@ -139,7 +143,10 @@ export function useAuthoringWorkspace(
           return;
         }
         setConversations(page.items);
-        setSelectedConversationId(page.items[0]?.id ?? null);
+        const requested = page.items.find(
+          (item) => item.id === initialConversationId,
+        );
+        setSelectedConversationId(requested?.id ?? page.items[0]?.id ?? null);
         setConversationStatus("ready");
       })
       .catch(() => {
@@ -151,7 +158,13 @@ export function useAuthoringWorkspace(
     return () => {
       ignore = true;
     };
-  }, [clearWorkspace, conversationReload, fetcher, organizationId]);
+  }, [
+    clearWorkspace,
+    conversationReload,
+    fetcher,
+    initialConversationId,
+    organizationId,
+  ]);
 
   useEffect(() => {
     let ignore = false;
@@ -396,6 +409,54 @@ export function useAuthoringWorkspace(
     ],
   );
 
+  const removeDocument = useCallback(
+    async (documentId: string): Promise<boolean> => {
+      if (
+        organizationId === null ||
+        selectedConversationId === null ||
+        action !== "idle"
+      ) {
+        return false;
+      }
+      const expectedOrganization = organizationId;
+      const expectedConversation = selectedConversationId;
+      setAction("removing");
+      setFeedback(null);
+      try {
+        await deleteDocument(
+          fetcher,
+          expectedOrganization,
+          expectedConversation,
+          documentId,
+        );
+        if (!contextIsCurrent(expectedOrganization, expectedConversation)) {
+          return false;
+        }
+        setDocuments((current) =>
+          current.filter((item) => item.id !== documentId),
+        );
+        setFeedback({ kind: "success", message: "Source removed." });
+        return true;
+      } catch {
+        if (contextIsCurrent(expectedOrganization, expectedConversation)) {
+          setFeedback({ kind: "error", message: PUBLIC_FAILURES.remove });
+        }
+        return false;
+      } finally {
+        if (contextIsCurrent(expectedOrganization, expectedConversation)) {
+          setAction("idle");
+        }
+      }
+    },
+    [
+      action,
+      contextIsCurrent,
+      fetcher,
+      organizationId,
+      selectedConversationId,
+    ],
+  );
+
   const upload = useCallback(
     async (kind: DocumentKind, file: File): Promise<boolean> => {
       if (
@@ -602,6 +663,7 @@ export function useAuthoringWorkspace(
     rename,
     appendInstruction,
     upload,
+    removeDocument,
     saveSection,
     markDone,
     reopen,

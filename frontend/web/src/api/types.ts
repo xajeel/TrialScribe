@@ -54,6 +54,7 @@ export type MessageRole = "user" | "assistant";
 export type DocumentKind = "trial_data" | "research_document";
 export type DocumentStatus = "pending" | "ready" | "failed";
 export type M11SectionStatus = "draft" | "done";
+export type M11RevisionAction = "revised" | "done" | "reopened";
 
 export interface Conversation {
   id: string;
@@ -130,4 +131,23 @@ export interface M11Section {
 export interface M11SectionWorkspace {
   catalog_version: string;
   items: M11Section[];
+}
+
+export interface M11SectionRevision {
+  id: string;
+  section_id: string;
+  conversation_id: string;
+  organization_id: string;
+  revision_number: number;
+  action: M11RevisionAction;
+  instructions: string;
+  content: string;
+  status: M11SectionStatus;
+  author_account_id: string | null;
+  created_at: string;
+}
+
+export interface M11SectionRevisionPage {
+  items: M11SectionRevision[];
+  next_after_revision: number | null;
 }

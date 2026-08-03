@@ -2,6 +2,7 @@ import type { AuthorizedFetch } from "../auth/AuthContext";
 import type {
   CreatedOrganizationInvitation,
   InvitationRole,
+  OrganizationInvitation,
   OrganizationMembership,
 } from "./types";
 
@@ -18,6 +19,28 @@ export function createOrganizationInvitation(
       method: "POST",
       json: { email, role },
     },
+  );
+}
+
+/** List invitation metadata. Acceptance URLs are intentionally not returned. */
+export function listOrganizationInvitations(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+): Promise<OrganizationInvitation[]> {
+  return fetcher<OrganizationInvitation[]>(
+    `/v1/organizations/${organizationId}/invitations`,
+  );
+}
+
+/** Revoke one invitation. Callers must confirm this destructive action. */
+export function revokeOrganizationInvitation(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  invitationId: string,
+): Promise<void> {
+  return fetcher<void>(
+    `/v1/organizations/${organizationId}/invitations/${invitationId}`,
+    { method: "DELETE" },
   );
 }
 

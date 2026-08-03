@@ -1,6 +1,10 @@
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import { organizationHeaders } from "./client";
-import type { M11Section, M11SectionWorkspace } from "./types";
+import type {
+  M11Section,
+  M11SectionRevisionPage,
+  M11SectionWorkspace,
+} from "./types";
 
 function workspacePath(conversationId: string): string {
   return `/v1/ai/conversations/${encodeURIComponent(conversationId)}/m11-sections`;
@@ -18,6 +22,17 @@ export function initializeM11Workspace(
 ): Promise<M11SectionWorkspace> {
   return fetcher<M11SectionWorkspace>(workspacePath(conversationId), {
     method: "PUT",
+    headers: organizationHeaders(organizationId),
+  });
+}
+
+/** Read persisted M11 sections without creating them. */
+export function listM11Sections(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<M11SectionWorkspace> {
+  return fetcher<M11SectionWorkspace>(workspacePath(conversationId), {
     headers: organizationHeaders(organizationId),
   });
 }
@@ -76,5 +91,24 @@ export function reopenM11Section(
       headers: organizationHeaders(organizationId),
       json: { expected_revision: expectedRevision },
     },
+  );
+}
+
+/** Read one section's immutable revision snapshots with cursor pagination. */
+export function listM11SectionRevisions(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+  sectionNumber: string,
+  afterRevision: number,
+  limit: number,
+): Promise<M11SectionRevisionPage> {
+  const query = new URLSearchParams({
+    after_revision: String(afterRevision),
+    limit: String(limit),
+  });
+  return fetcher<M11SectionRevisionPage>(
+    `${sectionPath(conversationId, sectionNumber)}/revisions?${query.toString()}`,
+    { headers: organizationHeaders(organizationId) },
   );
 }

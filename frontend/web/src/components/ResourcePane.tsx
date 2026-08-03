@@ -1,27 +1,25 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useState } from "react";
+import { Link } from "react-router-dom";
 
-import type {
-  DocumentKind,
-  M11Section,
-} from "../api/types";
+import type { M11Section } from "../api/types";
 import type { AuthoringWorkspaceController } from "../workspace/useAuthoringWorkspace";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-} from "./AsyncState";
+import { ErrorState, LoadingState } from "./AsyncState";
+import { formatSize } from "./SourceList";
 
-function readableBytes(byteSize: number): string {
-  if (byteSize < 1024) {
-    return `${byteSize} B`;
-  }
-  if (byteSize < 1024 * 1024) {
-    return `${(byteSize / 1024).toFixed(1)} KB`;
-  }
-  return `${(byteSize / (1024 * 1024)).toFixed(1)} MB`;
-}
+type InspectorTab = "outline" | "sources";
 
-/** Right-pane uploaded sources and ordered M11 section navigation. */
+const TABS: { key: InspectorTab; label: string }[] = [
+  { key: "outline", label: "Outline" },
+  { key: "sources", label: "Sources" },
+];
+
+const STATUS_LABELS = {
+  ready: "Ready",
+  pending: "Processing",
+  failed: "Failed",
+} as const;
+
+/** Right inspector: the ICH M11 outline and the sources backing this protocol. */
 export function ResourcePane({
   workspace,
   onOpenSection,
@@ -29,251 +27,182 @@ export function ResourcePane({
   workspace: AuthoringWorkspaceController;
   onOpenSection: (section: M11Section, opener: HTMLElement) => void;
 }) {
-  const [kind, setKind] = useState<DocumentKind>("research_document");
-  const [file, setFile] = useState<File | null>(null);
-  const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploading = workspace.action === "uploading";
-
-  const submitUpload = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (file === null) {
-      return;
-    }
-    setUploadFeedback("Uploading document…");
-    const filename = file.name;
-    if (await workspace.upload(kind, file)) {
-      setUploadFeedback(`${filename} uploaded successfully.`);
-      setFile(null);
-      if (fileInputRef.current !== null) {
-        fileInputRef.current.value = "";
-      }
-    } else {
-      setUploadFeedback("Upload failed. Check the file and try again.");
-    }
-  };
+  const [tab, setTab] = useState<InspectorTab>("outline");
+  const conversationId = workspace.selectedConversationId;
+  const total = workspace.sections.length;
+  const complete = workspace.sections.filter(
+    (item) => item.status === "done",
+  ).length;
+  const loading =
+    workspace.selectedConversation !== null &&
+    workspace.workspaceStatus === "loading";
+  const failed =
+    workspace.selectedConversation !== null &&
+    workspace.workspaceStatus === "error";
 
   return (
-    <aside
-      className="workspace-pane resource-pane"
-      aria-labelledby="resources-title"
-    >
-      <div className="workspace-pane__header">
-        <div>
-          <p className="workspace-pane__eyebrow">Conversation resources</p>
-          <h2 id="resources-title">Sources &amp; sections</h2>
-        </div>
+    <aside className="workbench-inspector" aria-labelledby="resources-title">
+      <h2 className="visually-hidden" id="resources-title">
+        Sources and sections
+      </h2>
+
+      <div className="workbench-inspector__tabs" role="tablist">
+        {TABS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === option.key}
+            className={
+              tab === option.key
+                ? "workbench-inspector__tab workbench-inspector__tab--current"
+                : "workbench-inspector__tab"
+            }
+            onClick={() => setTab(option.key)}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
 
-      <section
-        className="resource-group resource-group--documents"
-        aria-labelledby="documents-title"
-      >
-        <div className="resource-group__header">
-          <h3 id="documents-title">Documents</h3>
-          <span>{workspace.documents.length}</span>
-        </div>
-        <form className="document-upload" onSubmit={submitUpload}>
-          <label htmlFor="document-kind">Document kind</label>
-          <select
-            id="document-kind"
-            value={kind}
-            onChange={(event) => {
-              setKind(event.target.value as DocumentKind);
-              setFile(null);
-              setUploadFeedback(null);
-              if (fileInputRef.current !== null) {
-                fileInputRef.current.value = "";
-              }
-            }}
-            disabled={uploading}
-          >
-            <option value="research_document">Research document</option>
-            <option value="trial_data">Trial JSON</option>
-          </select>
-          <label htmlFor="document-file">Choose file</label>
-          <input
-            ref={fileInputRef}
-            id="document-file"
-            type="file"
-            accept={
-              kind === "trial_data"
-                ? ".json,application/json"
-                : ".pdf,.txt,application/pdf,text/plain"
-            }
-            onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null);
-              setUploadFeedback(null);
-            }}
-            disabled={uploading}
-            required
+      <div className="workbench-inspector__body">
+        {loading && <LoadingState label="Loading…" />}
+        {failed && (
+          <ErrorState
+            message="Could not load this workspace."
+            onRetry={workspace.retryWorkspace}
           />
-          <p className="chosen-file">
-            {file === null ? "No file chosen" : file.name}
-          </p>
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={
-              file === null ||
-              uploading ||
-              workspace.selectedConversation === null
-            }
-          >
-            {uploading ? "Uploading…" : "Upload"}
-          </button>
-          {uploadFeedback !== null && (
-            <p
-              className={
-                uploadFeedback.startsWith("Upload failed")
-                  ? "upload-feedback upload-feedback--error"
-                  : "upload-feedback"
-              }
-              role={
-                uploadFeedback.startsWith("Upload failed")
-                  ? "alert"
-                  : "status"
-              }
-            >
-              {uploadFeedback}
-            </p>
-          )}
-        </form>
+        )}
 
-        <div
-          className="pane-scroll document-list"
-          tabIndex={0}
-          aria-label="Uploaded documents"
-        >
-          {workspace.selectedConversation !== null &&
-            workspace.workspaceStatus === "loading" && (
-              <LoadingState label="Loading documents…" />
-            )}
-          {workspace.selectedConversation !== null &&
-            workspace.workspaceStatus === "error" && (
-              <ErrorState
-                message="Could not load documents."
-                onRetry={workspace.retryWorkspace}
-              />
-            )}
-          {workspace.workspaceStatus === "ready" &&
-            workspace.documents.length === 0 && (
-              <EmptyState
-                title="No documents"
-                description="Upload trial JSON or a research document."
-              />
-            )}
-          {workspace.documents.length > 0 && (
-            <ul>
-              {workspace.documents.map((document) => (
-                <li key={document.id} className="document-item">
-                  <span className="document-item__name">
-                    {document.filename}
-                  </span>
-                  <span className="document-item__meta">
-                    {document.kind === "trial_data"
-                      ? "Trial data"
-                      : "Research"}{" "}
-                    · {readableBytes(document.byte_size)}
-                  </span>
-                  <span
-                    className={`document-status document-status--${document.status}`}
-                  >
-                    {document.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      <section
-        className="resource-group resource-group--sections"
-        aria-labelledby="sections-title"
-      >
-        <div className="resource-group__header">
-          <h3 id="sections-title">M11 sections</h3>
-          <span>{workspace.sections.length}</span>
-        </div>
-        <div
-          className="pane-scroll section-list"
-          tabIndex={0}
-          aria-label="M11 section titles"
-        >
-          {workspace.selectedConversation !== null &&
-            workspace.workspaceStatus === "loading" && (
-              <LoadingState label="Loading M11 sections…" />
-            )}
-          {workspace.selectedConversation !== null &&
-            workspace.workspaceStatus === "error" && (
-              <ErrorState
-                message="Could not load M11 sections."
-                onRetry={workspace.retryWorkspace}
-              />
-            )}
-          {workspace.workspaceStatus === "ready" &&
-            workspace.sections.length === 0 && (
-              <EmptyState
-                title="No M11 sections"
-                description="Retry to initialize this conversation's workspace."
-              />
-            )}
-          {workspace.sections.length > 0 && (
-            <ol>
-              {workspace.sections.map((section) => {
-                const selected =
-                  section.section_number ===
-                  workspace.selectedSectionNumber;
-                return (
-                  <li
-                    key={section.id}
-                    className={
-                      selected
-                        ? "section-list__item section-list__item--selected"
-                        : "section-list__item"
-                    }
-                  >
-                    <button
-                      type="button"
-                      className="section-select"
-                      aria-pressed={selected}
-                      onClick={() =>
-                        workspace.selectSection(section.section_number)
+        {tab === "outline" && !loading && !failed && (
+          <>
+            <p className="workbench-inspector__label">ICH M11 framework</p>
+            {total === 0 ? (
+              <p className="workbench-inspector__empty">
+                This protocol&apos;s 14-section outline has not been prepared
+                yet.
+              </p>
+            ) : (
+              <ol className="workbench-outline">
+                {workspace.sections.map((section) => {
+                  const selected =
+                    section.section_number === workspace.selectedSectionNumber;
+                  const sectionDone = section.status === "done";
+                  const started = section.content.trim() !== "";
+                  return (
+                    <li
+                      key={section.id}
+                      className={
+                        selected
+                          ? "workbench-outline__item workbench-outline__item--current"
+                          : "workbench-outline__item"
                       }
                     >
-                      <span className="section-select__number">
-                        {section.section_number}
-                      </span>
-                      <span className="section-select__title">
-                        {section.title}
-                      </span>
-                      <span
-                        className={
-                          section.status === "done"
-                            ? "section-select__state section-select__state--done"
-                            : "section-select__state"
+                      <button
+                        type="button"
+                        className="workbench-outline__select"
+                        aria-current={selected ? "true" : undefined}
+                        onClick={() =>
+                          workspace.selectSection(section.section_number)
                         }
                       >
-                        {section.status}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="section-open"
-                      onClick={(event) =>
-                        onOpenSection(section, event.currentTarget)
-                      }
-                    >
-                      Open full section
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-        </div>
-      </section>
+                        <span className="workbench-outline__number">
+                          {section.section_number}
+                        </span>
+                        <span className="workbench-outline__title">
+                          {section.title}
+                        </span>
+                        <span
+                          className={`workbench-outline__state workbench-outline__state--${
+                            sectionDone ? "done" : started ? "draft" : "empty"
+                          }`}
+                        >
+                          {sectionDone ? "✓" : started ? "Draft" : "—"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="workbench-outline__read"
+                        aria-label={`Read ${section.title}`}
+                        onClick={(event) =>
+                          onOpenSection(section, event.currentTarget)
+                        }
+                      >
+                        Read
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </>
+        )}
+
+        {tab === "sources" && !loading && !failed && (
+          <>
+            <div className="workbench-inspector__label-row">
+              <p className="workbench-inspector__label">Trial data</p>
+              {conversationId !== null && (
+                <Link
+                  className="workbench-inspector__link"
+                  to={`/workspace/${encodeURIComponent(conversationId)}/sources`}
+                >
+                  Manage
+                </Link>
+              )}
+            </div>
+            <SourceGroup
+              documents={workspace.documents.filter(
+                (item) => item.kind === "trial_data",
+              )}
+              emptyLabel="No trial data added."
+            />
+            <p className="workbench-inspector__label">Research documents</p>
+            <SourceGroup
+              documents={workspace.documents.filter(
+                (item) => item.kind === "research_document",
+              )}
+              emptyLabel="No research documents added."
+            />
+          </>
+        )}
+      </div>
+
+      <footer className="workbench-inspector__foot">
+        <span>Sections complete</span>
+        <strong>
+          {complete} of {total}
+        </strong>
+      </footer>
     </aside>
+  );
+}
+
+function SourceGroup({
+  documents,
+  emptyLabel,
+}: {
+  documents: AuthoringWorkspaceController["documents"];
+  emptyLabel: string;
+}) {
+  if (documents.length === 0) {
+    return <p className="workbench-inspector__empty">{emptyLabel}</p>;
+  }
+  return (
+    <ul className="workbench-sources">
+      {documents.map((record) => (
+        <li key={record.id}>
+          <span className="workbench-sources__name">{record.filename}</span>
+          <span className="workbench-sources__meta">
+            {formatSize(record.byte_size)}
+          </span>
+          <span
+            className={`workbench-sources__status workbench-sources__status--${record.status}`}
+          >
+            {STATUS_LABELS[record.status]}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

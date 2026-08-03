@@ -1,23 +1,20 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { AuthoringWorkspaceController } from "../workspace/useAuthoringWorkspace";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-} from "./AsyncState";
+import { ErrorState, LoadingState } from "./AsyncState";
 
 const activityFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
 });
 
-/** Left-pane conversation navigation and reversible workspace actions. */
+/** Left rail: every protocol in the organization, with the open one marked. */
 export function ConversationPane({
   workspace,
 }: {
   workspace: AuthoringWorkspaceController;
 }) {
+  const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -38,6 +35,7 @@ export function ConversationPane({
     }
     if (await workspace.create(title)) {
       setNewTitle("");
+      setCreating(false);
     }
   };
 
@@ -52,65 +50,82 @@ export function ConversationPane({
     }
   };
 
+  const busy = workspace.action !== "idle";
+  const total = workspace.sections.length;
+  const complete = workspace.sections.filter(
+    (item) => item.status === "done",
+  ).length;
+  const percent = total === 0 ? 0 : Math.round((complete / total) * 100);
+
   return (
-    <nav
-      className="workspace-pane conversation-pane"
-      aria-labelledby="conversations-title"
-    >
-      <div className="workspace-pane__header">
-        <div>
-          <p className="workspace-pane__eyebrow">Authoring</p>
-          <h1 id="conversations-title">Conversations</h1>
-        </div>
+    <nav className="workbench-rail" aria-labelledby="conversations-title">
+      <div className="workbench-rail__head">
+        <h2 id="conversations-title">Protocol workspaces</h2>
       </div>
 
-      <form className="conversation-create" onSubmit={submitNew}>
-        <label htmlFor="new-conversation-title">New conversation</label>
-        <div className="conversation-create__controls">
+      {creating ? (
+        <form className="workbench-rail__create" onSubmit={submitNew}>
+          <label htmlFor="new-conversation-title">New protocol title</label>
           <input
             id="new-conversation-title"
             type="text"
             value={newTitle}
             onChange={(event) => setNewTitle(event.target.value)}
             placeholder="Protocol title"
-            disabled={workspace.action !== "idle"}
+            disabled={busy}
+            autoFocus
             required
           />
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={
-              newTitle.trim() === "" || workspace.action !== "idle"
-            }
-          >
-            {workspace.action === "creating" ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </form>
+          <div className="workbench-rail__create-actions">
+            <button
+              type="submit"
+              className="workbench-button workbench-button--primary"
+              disabled={newTitle.trim() === "" || busy}
+            >
+              {workspace.action === "creating" ? "Creating…" : "Create"}
+            </button>
+            <button
+              type="button"
+              className="workbench-button workbench-button--quiet"
+              onClick={() => {
+                setCreating(false);
+                setNewTitle("");
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          className="workbench-rail__new"
+          onClick={() => setCreating(true)}
+          disabled={busy}
+        >
+          <span aria-hidden="true">+</span> New protocol
+        </button>
+      )}
 
-      <div
-        className="pane-scroll conversation-list"
-        tabIndex={0}
-        aria-label="Conversation list"
-      >
+      <div className="workbench-rail__list" aria-label="Protocol list">
         {workspace.conversationStatus === "loading" && (
-          <LoadingState label="Loading conversations…" />
+          <LoadingState label="Loading protocols…" />
         )}
         {workspace.conversationStatus === "error" && (
           <ErrorState
-            message="Could not load conversations."
+            message="Could not load protocols."
             onRetry={workspace.retryConversations}
           />
         )}
         {workspace.conversationStatus === "ready" &&
           workspace.conversations.length === 0 && (
-            <EmptyState
-              title="No conversations yet"
-              description="Create one to begin authoring a protocol."
-            />
+            <p className="workbench-rail__empty">
+              No protocols yet. Create one to begin authoring.
+            </p>
           )}
         {workspace.conversations.length > 0 && (
-          <ul className="conversation-list__items">
+          <ul>
             {workspace.conversations.map((conversation) => {
               const selected =
                 conversation.id === workspace.selectedConversationId;
@@ -119,78 +134,76 @@ export function ConversationPane({
                   key={conversation.id}
                   className={
                     selected
-                      ? "conversation-list__item conversation-list__item--selected"
-                      : "conversation-list__item"
+                      ? "workbench-rail__item workbench-rail__item--current"
+                      : "workbench-rail__item"
                   }
                 >
                   <button
                     type="button"
-                    className="conversation-select"
+                    className="workbench-rail__select"
                     aria-current={selected ? "page" : undefined}
                     onClick={() =>
                       workspace.selectConversation(conversation.id)
                     }
                   >
-                    <span className="conversation-select__title">
+                    <span className="workbench-rail__title">
                       {conversation.title}
                     </span>
-                    <span className="conversation-select__activity">
-                      Active{" "}
-                      {activityFormatter.format(
-                        new Date(conversation.last_activity_at),
-                      )}
+                    <span className="workbench-rail__sub">
+                      {selected && total > 0
+                        ? `${total} sections · active ${activityFormatter.format(new Date(conversation.last_activity_at))}`
+                        : `Active ${activityFormatter.format(new Date(conversation.last_activity_at))}`}
                     </span>
+                    {selected && total > 0 && (
+                      <span className="workbench-rail__progress">
+                        <span style={{ width: `${percent}%` }} />
+                      </span>
+                    )}
                   </button>
+
                   {selected && !renaming && (
                     <button
                       type="button"
-                      className="conversation-rename-trigger"
+                      className="workbench-rail__rename"
                       onClick={() => {
                         setRenameTitle(conversation.title);
                         setRenaming(true);
                       }}
-                      disabled={workspace.action !== "idle"}
+                      disabled={busy}
                     >
                       Rename
                     </button>
                   )}
                   {selected && renaming && (
                     <form
-                      className="conversation-rename"
+                      className="workbench-rail__rename-form"
                       onSubmit={submitRename}
                     >
                       <label htmlFor={`rename-${conversation.id}`}>
-                        Conversation title
+                        Protocol title
                       </label>
                       <input
                         id={`rename-${conversation.id}`}
                         type="text"
                         value={renameTitle}
-                        onChange={(event) =>
-                          setRenameTitle(event.target.value)
-                        }
-                        disabled={workspace.action !== "idle"}
+                        onChange={(event) => setRenameTitle(event.target.value)}
+                        disabled={busy}
                         required
                         autoFocus
                       />
-                      <div className="conversation-rename__actions">
+                      <div className="workbench-rail__create-actions">
                         <button
                           type="submit"
-                          className="button button--primary"
-                          disabled={
-                            renameTitle.trim() === "" ||
-                            workspace.action !== "idle"
-                          }
+                          className="workbench-button workbench-button--primary"
+                          disabled={renameTitle.trim() === "" || busy}
                         >
-                          {workspace.action === "renaming"
-                            ? "Saving…"
-                            : "Save"}
+                          {workspace.action === "renaming" ? "Saving…" : "Save"}
                         </button>
                         <button
                           type="button"
-                          className="button button--ghost"
+                          className="workbench-button workbench-button--quiet"
                           onClick={() => setRenaming(false)}
-                          disabled={workspace.action !== "idle"}
+                          disabled={busy}
                         >
                           Cancel
                         </button>

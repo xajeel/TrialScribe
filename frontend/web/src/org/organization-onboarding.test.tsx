@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { RequestOptions } from "../api/client";
+import { ApiError, type RequestOptions } from "../api/client";
 import type {
   CreatedOrganizationInvitation,
   Organization,
@@ -152,7 +152,9 @@ describe("organization onboarding", () => {
     );
 
     expect(
-      await screen.findByText("Northstar Research is ready to use."),
+      await screen.findByText(
+        "Northstar Research created. Opening your workspace…",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -187,6 +189,9 @@ describe("organization onboarding", () => {
     renderOnboarding(fetcher);
 
     await screen.findByText(/Organization state: ready; active:\s+none/);
+    await user.click(
+      screen.getByRole("tab", { name: "Join with invitation" }),
+    );
     await user.type(
       screen.getByLabelText("Invitation link or token"),
       "https://app.example.com/invitations/accept?source=email&token=join-secret",
@@ -196,7 +201,9 @@ describe("organization onboarding", () => {
     );
 
     expect(
-      await screen.findByText("You joined Joined Trials."),
+      await screen.findByText(
+        "You joined Joined Trials. Opening your workspace…",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -238,6 +245,128 @@ describe("organization onboarding", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByText("private database topology"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("switches tabs by keyboard and keeps each field contract", async () => {
+    const { fetcher } = createFetcher((path, options) => {
+      if (path === "/v1/organizations" && options === undefined) {
+        return [];
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const user = userEvent.setup();
+    renderOnboarding(fetcher);
+
+    await screen.findByText(/Organization state: ready; active:\s+none/);
+    const createTab = screen.getByRole("tab", {
+      name: "Create organization",
+    });
+    const joinTab = screen.getByRole("tab", {
+      name: "Join with invitation",
+    });
+    const name = screen.getByLabelText("Organization name");
+
+    expect(createTab).toHaveAttribute("aria-selected", "true");
+    expect(name).toHaveAttribute("maxlength", "120");
+    expect(
+      screen.queryByLabelText("Invitation link or token"),
+    ).not.toBeInTheDocument();
+
+    await user.type(name, "a".repeat(99));
+    expect(screen.queryByText("99 / 120")).not.toBeInTheDocument();
+    await user.type(name, "a");
+    expect(screen.getByText("100 / 120")).toBeInTheDocument();
+
+    createTab.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(joinTab).toHaveFocus();
+    expect(joinTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Invitation link or token")).toHaveAttribute(
+      "autocomplete",
+      "off",
+    );
+
+    await user.keyboard("{Home}");
+    expect(createTab).toHaveFocus();
+    expect(screen.getByLabelText("Organization name")).toHaveValue(
+      "a".repeat(100),
+    );
+  });
+
+  it("disables the create form while its request is pending", async () => {
+    let resolveCreate: (organization: Organization) => void = () => undefined;
+    const pendingCreate = new Promise<Organization>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const { fetcher } = createFetcher((path, options) => {
+      if (path === "/v1/organizations" && options === undefined) {
+        return [];
+      }
+      if (
+        path === "/v1/organizations" &&
+        options?.method === "POST"
+      ) {
+        return pendingCreate;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const user = userEvent.setup();
+    renderOnboarding(fetcher);
+
+    await screen.findByText(/Organization state: ready; active:\s+none/);
+    const name = screen.getByLabelText("Organization name");
+    await user.type(name, "Northstar Research");
+    await user.click(
+      screen.getByRole("button", { name: "Create organization" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
+    expect(name).toBeDisabled();
+
+    await act(async () => {
+      resolveCreate(CREATED_ORGANIZATION);
+      await pendingCreate;
+    });
+    expect(
+      await screen.findByText(
+        "Northstar Research created. Opening your workspace…",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("uses one safe message for invalid invitation responses", async () => {
+    const { fetcher } = createFetcher((path, options) => {
+      if (path === "/v1/organizations" && options === undefined) {
+        return [];
+      }
+      if (path === "/v1/organization-invitations/accept") {
+        throw new ApiError(422, "Invalid organization invitation");
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const user = userEvent.setup();
+    renderOnboarding(fetcher);
+
+    await screen.findByText(/Organization state: ready; active:\s+none/);
+    await user.click(
+      screen.getByRole("tab", { name: "Join with invitation" }),
+    );
+    await user.type(
+      screen.getByLabelText("Invitation link or token"),
+      "single-use-secret",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Join organization" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "This invitation is invalid or has expired. Ask the sender for a new link.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Invalid organization invitation"),
     ).not.toBeInTheDocument();
   });
 });

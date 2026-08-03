@@ -17,6 +17,19 @@ export function listDocuments(
   });
 }
 
+/** Remove one uploaded document and its stored content. */
+export async function deleteDocument(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+  documentId: string,
+): Promise<void> {
+  await fetcher<void>(
+    `${documentsPath(conversationId)}/${encodeURIComponent(documentId)}`,
+    { method: "DELETE", headers: organizationHeaders(organizationId) },
+  );
+}
+
 /** Upload one trial-data or research file using browser-managed multipart data. */
 export function uploadDocument(
   fetcher: AuthorizedFetch,

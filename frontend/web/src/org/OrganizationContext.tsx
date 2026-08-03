@@ -11,6 +11,7 @@ import {
   acceptOrganizationInvitation,
   extractInvitationToken,
 } from "../api/invitations";
+import { ApiError } from "../api/client";
 import {
   createOrganization,
   listOrganizations,
@@ -30,6 +31,8 @@ const STORAGE_KEY = "trialscribe.activeOrganization";
 const CREATE_ERROR = "Could not create the organization. Please try again.";
 const JOIN_ERROR =
   "Could not join the organization. Check the invitation and try again.";
+const INVALID_INVITATION =
+  "This invitation is invalid or has expired. Ask the sender for a new link.";
 
 export interface OrganizationContextValue {
   status: OrganizationStatus;
@@ -144,7 +147,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
         setStatus("ready");
         setFeedback({
           kind: "success",
-          message: `${created.name} is ready to use.`,
+          message: `${created.name} created. Opening your workspace…`,
         });
         return true;
       } catch {
@@ -199,12 +202,18 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
         setStatus("ready");
         setFeedback({
           kind: "success",
-          message: `You joined ${joined.name}.`,
+          message: `You joined ${joined.name}. Opening your workspace…`,
         });
         return true;
-      } catch {
+      } catch (error) {
         if (session === sessionGeneration.current) {
-          setFeedback({ kind: "error", message: JOIN_ERROR });
+          setFeedback({
+            kind: "error",
+            message:
+              error instanceof ApiError && error.status === 422
+                ? INVALID_INVITATION
+                : JOIN_ERROR,
+          });
         }
         return false;
       } finally {

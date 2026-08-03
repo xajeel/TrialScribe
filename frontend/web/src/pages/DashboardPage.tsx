@@ -1,120 +1,255 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 
 import type { M11Section } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { AccountMenu } from "../components/AccountMenu";
-import { AppLayout } from "../components/AppLayout";
 import { AuthoringPane } from "../components/AuthoringPane";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-} from "../components/AsyncState";
+import { ErrorState, LoadingState } from "../components/AsyncState";
+import { BrandLogo } from "../components/BrandLogo";
 import { ConversationPane } from "../components/ConversationPane";
-import { OrganizationOnboarding } from "../components/OrganizationOnboarding";
 import { ResourcePane } from "../components/ResourcePane";
-import { SectionModal } from "../components/SectionModal";
+import { SectionReader } from "../components/SectionReader";
 import { useOrganization } from "../org/useOrganization";
 import { useAuthoringWorkspace } from "../workspace/useAuthoringWorkspace";
+import {
+  reviewWorkbench,
+  type WorkbenchReview,
+} from "../product/workbenchReviewFixtures";
+import { REVIEW_WORKSPACE_ORGANIZATION } from "../product/workspaceReviewFixtures";
+import { OrganizationSetupPage } from "./OrganizationSetupPage";
 
-export function DashboardPage() {
-  const { account, authorizedFetch } = useAuth();
+type Pane = "protocols" | "resources";
+
+/** The three-pane authoring workbench: protocols, the section document, resources. */
+export function DashboardPage({
+  review,
+}: {
+  review?: WorkbenchReview;
+} = {}) {
+  const { authorizedFetch } = useAuth();
   const org = useOrganization();
-  const [modalSectionId, setModalSectionId] = useState<string | null>(null);
-  const [modalOpener, setModalOpener] = useState<HTMLElement | null>(null);
+  const { conversationId } = useParams();
+  const [readerSectionId, setReaderSectionId] = useState<string | null>(null);
+  const [readerOpener, setReaderOpener] = useState<HTMLElement | null>(null);
+  const [openPane, setOpenPane] = useState<Pane | null>(null);
 
+  const reviewing = review !== undefined;
   const ready = org.status === "ready";
   const memberOfOrg = ready && org.organizations.length > 0;
-  const active = ready
+  const liveActive = ready
     ? (org.organizations.find((item) => item.id === org.activeId) ?? null)
     : null;
-  const workspace = useAuthoringWorkspace(active?.id ?? null, authorizedFetch);
-  const modalSection = useMemo(
-    () =>
-      workspace.sections.find((item) => item.id === modalSectionId) ?? null,
-    [modalSectionId, workspace.sections],
+  const organization = reviewing ? REVIEW_WORKSPACE_ORGANIZATION : liveActive;
+
+  const live = useAuthoringWorkspace(
+    reviewing ? null : (liveActive?.id ?? null),
+    authorizedFetch,
+    reviewing ? null : (conversationId ?? null),
+  );
+  const sample = reviewing ? reviewWorkbench(review) : null;
+  const workspace = sample ?? live;
+
+  const readerSection = useMemo(
+    () => workspace.sections.find((item) => item.id === readerSectionId) ?? null,
+    [readerSectionId, workspace.sections],
   );
 
   useEffect(() => {
-    setModalSectionId(null);
-    setModalOpener(null);
+    setReaderSectionId(null);
+    setReaderOpener(null);
   }, [workspace.selectedConversationId]);
 
-  const openSection = (section: M11Section, opener: HTMLElement) => {
-    setModalSectionId(section.id);
-    setModalOpener(opener);
-  };
+  useEffect(() => {
+    if (openPane === null) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenPane(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openPane]);
 
-  const actions = (
-    <>
-      {memberOfOrg && (
-        <select
-          aria-label="Organization"
-          value={org.activeId ?? ""}
-          onChange={(event) => org.select(event.target.value)}
-        >
-          {org.organizations.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      )}
-      <AccountMenu />
-    </>
+  const openSection = useCallback(
+    (section: M11Section, opener: HTMLElement) => {
+      setReaderSectionId(section.id);
+      setReaderOpener(opener);
+      setOpenPane(null);
+    },
+    [],
   );
 
+  const closeReader = useCallback(() => {
+    setReaderSectionId(null);
+    setReaderOpener(null);
+  }, []);
+
+  if (ready && !memberOfOrg && !reviewing) {
+    return <OrganizationSetupPage />;
+  }
+
+  const protocol = workspace.selectedConversation;
+  const routeId = conversationId ?? protocol?.id ?? "";
+  const saving = workspace.action === "saving";
+
   return (
-    <AppLayout actions={actions}>
-      <div className="authoring-workspace-page">
-        <p className="workspace-session">Signed in as {account?.email}</p>
-        {org.status !== "ready" && (
-          <section className="workspace-entry-state" aria-label="Organizations">
-            {org.status === "error" ? (
-              <ErrorState
-                message="Could not load your organizations."
-                onRetry={org.reload}
-              />
-            ) : (
-              <LoadingState label="Loading your organizations…" />
-            )}
-          </section>
-        )}
-        {ready && !memberOfOrg && (
-          <section className="workspace-entry-state" aria-label="Organizations">
-            <EmptyState
-              title="No organizations yet"
-              description="Create your first organization or join one with an invitation."
-            />
-            <OrganizationOnboarding />
-          </section>
-        )}
-        {active !== null && (
-          <>
-            <div className="authoring-workspace">
-              <ConversationPane workspace={workspace} />
-              <AuthoringPane workspace={workspace} />
-              <ResourcePane
-                workspace={workspace}
-                onOpenSection={openSection}
-              />
-            </div>
-            <SectionModal
-              section={modalSection}
-              returnFocusTo={modalOpener}
-              onClose={() => {
-                setModalSectionId(null);
-                setModalOpener(null);
-              }}
-            />
-          </>
-        )}
-        {ready && memberOfOrg && active === null && (
-          <section className="workspace-entry-state" aria-label="Organizations">
-            <LoadingState label="Loading your organizations…" />
-          </section>
-        )}
+    <div className="workbench">
+      <a className="workbench__skip" href="#workbench-centre">
+        Skip to main content
+      </a>
+
+      <header className="workbench__topbar">
+        <div className="workbench__brand">
+          <BrandLogo
+            className="workbench__logo"
+            to="/protocols"
+            ariaLabel="TrialScribe protocols"
+          />
+          <span className="workbench__divider" aria-hidden="true" />
+          <span className="workbench__org">{organization?.name ?? ""}</span>
+          <span className="workbench__slash" aria-hidden="true">
+            /
+          </span>
+          <span className="workbench__protocol">
+            {protocol?.title ?? "Protocol workspace"}
+          </span>
+          {protocol !== null && (
+            <span
+              className={
+                protocol.status === "archived"
+                  ? "workbench-badge"
+                  : "workbench-badge workbench-badge--active"
+              }
+            >
+              {protocol.status === "archived" ? "Archived" : "Active"}
+            </span>
+          )}
+        </div>
+
+        <div className="workbench__topbar-actions">
+          <span className="workbench__saved" role="status">
+            {saving ? "Saving…" : "Saved"}
+          </span>
+          {routeId !== "" && (
+            <nav className="workbench__links" aria-label="Protocol views">
+              <Link to={`/workspace/${encodeURIComponent(routeId)}/instructions`}>
+                Instructions
+              </Link>
+              <Link to={`/workspace/${encodeURIComponent(routeId)}/progress`}>
+                Progress
+              </Link>
+              <Link to={`/workspace/${encodeURIComponent(routeId)}/sources`}>
+                Sources
+              </Link>
+            </nav>
+          )}
+          {reviewing ? (
+            <span className="avatar" aria-label="Review account MC">
+              MC
+            </span>
+          ) : (
+            <AccountMenu />
+          )}
+        </div>
+      </header>
+
+      <div className="workbench__toolbar">
+        <button
+          type="button"
+          className="workbench__toggle"
+          aria-expanded={openPane === "protocols"}
+          onClick={() =>
+            setOpenPane((current) =>
+              current === "protocols" ? null : "protocols",
+            )
+          }
+        >
+          Protocols
+        </button>
+        <button
+          type="button"
+          className="workbench__toggle"
+          aria-expanded={openPane === "resources"}
+          onClick={() =>
+            setOpenPane((current) =>
+              current === "resources" ? null : "resources",
+            )
+          }
+        >
+          Outline &amp; sources
+        </button>
       </div>
-    </AppLayout>
+
+      {!reviewing && org.status !== "ready" && (
+        <section className="workbench__state" aria-label="Organizations">
+          {org.status === "error" ? (
+            <ErrorState
+              message="Could not load your organizations."
+              onRetry={org.reload}
+            />
+          ) : (
+            <LoadingState label="Loading your organizations…" />
+          )}
+        </section>
+      )}
+
+      {(reviewing || liveActive !== null) && (
+        <>
+          {openPane !== null && (
+            <button
+              type="button"
+              className="workbench__scrim"
+              aria-label="Close panel"
+              onClick={() => setOpenPane(null)}
+            />
+          )}
+
+          <div
+            className={
+              openPane === null
+                ? "workbench__body"
+                : `workbench__body workbench__body--open-${openPane}`
+            }
+          >
+            <div className="workbench__pane workbench__pane--rail">
+              <ConversationPane workspace={workspace} />
+            </div>
+            <div className="workbench__pane workbench__pane--centre">
+              <div id="workbench-centre">
+                <AuthoringPane workspace={workspace} />
+              </div>
+            </div>
+            <div className="workbench__pane workbench__pane--inspector">
+              <ResourcePane workspace={workspace} onOpenSection={openSection} />
+            </div>
+          </div>
+
+          <SectionReader
+            section={readerSection}
+            returnFocusTo={readerOpener}
+            onOpenInEditor={(section) => {
+              workspace.selectSection(section.section_number);
+              closeReader();
+            }}
+            onAddInstruction={(section) => {
+              workspace.selectSection(section.section_number);
+              closeReader();
+            }}
+            onClose={closeReader}
+          />
+        </>
+      )}
+
+      {ready && memberOfOrg && liveActive === null && !reviewing && (
+        <section className="workbench__state" aria-label="Organizations">
+          <LoadingState label="Loading your organizations…" />
+        </section>
+      )}
+    </div>
   );
 }

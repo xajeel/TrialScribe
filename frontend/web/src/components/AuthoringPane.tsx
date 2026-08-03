@@ -1,18 +1,45 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { AuthoringWorkspaceController } from "../workspace/useAuthoringWorkspace";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-} from "./AsyncState";
+import { EmptyState, ErrorState, LoadingState } from "./AsyncState";
 
-/** Center-pane durable conversation history and manual M11 section editor. */
+type CentreView = "document" | "instructions";
+
+const VIEWS: { key: CentreView; label: string }[] = [
+  { key: "document", label: "Document" },
+  { key: "instructions", label: "Instructions" },
+];
+
+function relativeTime(isoDate: string): string {
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const minutes = Math.round((Date.now() - parsed.getTime()) / 60_000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/**
+ * The centre of the workbench: one M11 section presented as a document on
+ * paper. The prose itself is the editor, so the surface a reader sees and the
+ * surface an author types into are the same thing.
+ */
 export function AuthoringPane({
   workspace,
 }: {
   workspace: AuthoringWorkspaceController;
 }) {
+  const [view, setView] = useState<CentreView>("document");
   const [instruction, setInstruction] = useState("");
   const [sectionInstructions, setSectionInstructions] = useState("");
   const [sectionContent, setSectionContent] = useState("");
@@ -21,7 +48,12 @@ export function AuthoringPane({
   useEffect(() => {
     setSectionInstructions(section?.instructions ?? "");
     setSectionContent(section?.content ?? "");
-  }, [section?.current_revision, section?.id, section?.instructions, section?.content]);
+  }, [
+    section?.current_revision,
+    section?.id,
+    section?.instructions,
+    section?.content,
+  ]);
 
   const submitInstruction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -34,45 +66,121 @@ export function AuthoringPane({
     }
   };
 
-  const submitSection = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    await workspace.saveSection(sectionInstructions, sectionContent);
-  };
-
   const sectionChanged =
     section !== null &&
     (sectionInstructions !== section.instructions ||
       sectionContent !== section.content);
   const busy = workspace.action !== "idle";
+  const done = section?.status === "done";
+  const total = workspace.sections.length;
+  const complete = workspace.sections.filter(
+    (item) => item.status === "done",
+  ).length;
+  const percent = total === 0 ? 0 : Math.round((complete / total) * 100);
+
+  if (
+    workspace.conversationStatus === "ready" &&
+    workspace.conversations.length === 0
+  ) {
+    return (
+      <section className="workbench-centre" aria-label="Section editor">
+        <div className="workbench-centre__state">
+          <EmptyState
+            title="Create a protocol"
+            description="Your durable instructions, sources, and M11 sections will appear here."
+          />
+        </div>
+      </section>
+    );
+  }
+
+  if (workspace.selectedConversation === null) {
+    return <section className="workbench-centre" aria-label="Section editor" />;
+  }
+
+  if (workspace.workspaceStatus === "loading") {
+    return (
+      <section className="workbench-centre" aria-label="Section editor">
+        <div className="workbench-centre__state">
+          <LoadingState label="Loading this authoring workspace…" />
+        </div>
+      </section>
+    );
+  }
+
+  if (workspace.workspaceStatus === "error") {
+    return (
+      <section className="workbench-centre" aria-label="Section editor">
+        <div className="workbench-centre__state">
+          <ErrorState
+            message="Could not load this authoring workspace."
+            onRetry={workspace.retryWorkspace}
+          />
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <section
-      className="workspace-pane authoring-pane"
-      aria-labelledby="authoring-pane-title"
-    >
-      <div className="workspace-pane__header authoring-pane__header">
-        <div>
-          <p className="workspace-pane__eyebrow">Current workspace</p>
-          <h2 id="authoring-pane-title">
-            {workspace.selectedConversation?.title ?? "Authoring"}
-          </h2>
+    <section className="workbench-centre" aria-label="Section editor">
+      <header className="workbench-centre__head">
+        <div className="workbench-centre__head-row">
+          <div className="workbench-centre__title">
+            <h1>
+              {section === null
+                ? "No section selected"
+                : `${section.section_number} · ${section.title}`}
+            </h1>
+            {section !== null && (
+              <span
+                className={
+                  done
+                    ? "workbench-badge workbench-badge--done"
+                    : "workbench-badge"
+                }
+              >
+                {done ? "Done" : "Draft"}
+              </span>
+            )}
+          </div>
+          <nav className="workbench-segmented" aria-label="Centre pane view">
+            {VIEWS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                aria-pressed={view === option.key}
+                className={
+                  view === option.key
+                    ? "workbench-segmented__item workbench-segmented__item--current"
+                    : "workbench-segmented__item"
+                }
+                onClick={() => setView(option.key)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </nav>
         </div>
-        {section !== null && (
-          <span
-            className={
-              section.status === "done"
-                ? "section-status section-status--done"
-                : "section-status"
-            }
-          >
-            {section.status}
+        <p className="workbench-centre__meta">
+          <span>
+            {complete} of {total} sections complete
           </span>
-        )}
-      </div>
+          {section !== null && (
+            <span>Last edited {relativeTime(section.updated_at)}</span>
+          )}
+        </p>
+        <div
+          className="workbench-rule"
+          role="img"
+          aria-label={`${percent}% of sections complete`}
+        >
+          <span style={{ width: `${percent}%` }} />
+        </div>
+      </header>
 
       {workspace.feedback !== null && (
         <div
-          className={`workspace-feedback workspace-feedback--${workspace.feedback.kind}`}
+          className={`workbench-feedback workbench-feedback--${workspace.feedback.kind}`}
           role={workspace.feedback.kind === "error" ? "alert" : "status"}
         >
           <span>{workspace.feedback.message}</span>
@@ -86,71 +194,109 @@ export function AuthoringPane({
         </div>
       )}
 
-      {workspace.conversationStatus === "ready" &&
-        workspace.conversations.length === 0 && (
-          <EmptyState
-            title="Create a conversation"
-            description="Your durable messages, documents, and M11 sections will appear here."
-          />
-        )}
-
-      {workspace.selectedConversation !== null &&
-        workspace.workspaceStatus === "loading" && (
-          <LoadingState label="Loading this authoring workspace…" />
-        )}
-
-      {workspace.selectedConversation !== null &&
-        workspace.workspaceStatus === "error" && (
-          <ErrorState
-            message="Could not load this authoring workspace."
-            onRetry={workspace.retryWorkspace}
-          />
-        )}
-
-      {workspace.selectedConversation !== null &&
-        workspace.workspaceStatus === "ready" && (
-          <div className="authoring-pane__body">
-            <section
-              className="conversation-thread"
-              aria-labelledby="conversation-thread-title"
-            >
-              <div className="authoring-section-heading">
+      <div className="workbench-centre__canvas">
+        <article className="workbench-paper">
+          {view === "document" && section !== null && (
+            <>
+              <div className="workbench-paper__meta">
                 <div>
-                  <p className="workspace-pane__eyebrow">Conversation</p>
-                  <h3 id="conversation-thread-title">Instructions</h3>
+                  <p className="workbench-paper__label">Schema</p>
+                  <p className="workbench-paper__schema">
+                    ICH M11 Clinical Electronic Structured Harmonised Protocol
+                  </p>
                 </div>
-                <span className="generation-cue">
-                  Generation arrives in a later feature
-                </span>
+                <div className="workbench-paper__meta-right">
+                  <p>
+                    Section {section.section_number} of {total}
+                  </p>
+                  <span className="workbench-chip">
+                    Revision {section.current_revision}
+                  </span>
+                </div>
               </div>
-              <div
-                className="pane-scroll message-list"
-                tabIndex={0}
-                aria-label="Conversation messages"
+
+              {/* Repeats the sticky header's h1 as the document's own title,
+                  so it is presentational rather than a second heading. */}
+              <p className="workbench-paper__title" aria-hidden="true">
+                {section.section_number} · {section.title}
+              </p>
+
+              <label
+                className="workbench-paper__field-label"
+                htmlFor="section-instructions"
               >
-                {workspace.messages.length === 0 ? (
-                  <EmptyState
-                    title="No instructions yet"
-                    description="Add context or a writing request for this conversation."
-                  />
-                ) : (
-                  <ol>
-                    {workspace.messages.map((message) => (
-                      <li
-                        key={message.id}
-                        className={`message message--${message.role}`}
-                      >
-                        <span className="message__role">
-                          {message.role === "user" ? "You" : "TrialScribe"}
-                        </span>
-                        <p>{message.content}</p>
-                      </li>
-                    ))}
-                  </ol>
-                )}
+                Section instructions
+              </label>
+              <textarea
+                id="section-instructions"
+                className="workbench-paper__note"
+                value={sectionInstructions}
+                onChange={(event) => setSectionInstructions(event.target.value)}
+                rows={2}
+                disabled={busy || done}
+                placeholder="Add section-specific writing guidance…"
+              />
+
+              <label
+                className="workbench-paper__field-label"
+                htmlFor="section-content"
+              >
+                Section content
+              </label>
+              <textarea
+                id="section-content"
+                className="workbench-paper__prose"
+                value={sectionContent}
+                onChange={(event) => setSectionContent(event.target.value)}
+                rows={16}
+                disabled={busy || done}
+                placeholder="Draft the complete section here…"
+              />
+
+              <p className="workbench-paper__end">
+                End of section {section.section_number}
+              </p>
+            </>
+          )}
+
+          {view === "document" && section === null && (
+            <EmptyState
+              title="No M11 sections"
+              description="This protocol's 14-section outline has not been prepared yet."
+            />
+          )}
+
+          {view === "instructions" && (
+            <>
+              <div className="workbench-paper__meta">
+                <div>
+                  <p className="workbench-paper__label">Workspace context</p>
+                  <p className="workbench-paper__schema">
+                    Instructions apply to every section in this protocol
+                  </p>
+                </div>
               </div>
+
+              {workspace.messages.length === 0 ? (
+                <EmptyState
+                  title="No instructions yet"
+                  description="Add context or a writing request for this protocol."
+                />
+              ) : (
+                <ol className="workbench-instructions">
+                  {workspace.messages.map((message) => (
+                    <li key={message.id}>
+                      <span className="workbench-instructions__author">
+                        {message.role === "user" ? "You" : "TrialScribe"}
+                      </span>
+                      <p>{message.content}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+
               <form
-                className="instruction-composer"
+                className="workbench-composer"
                 onSubmit={submitInstruction}
               >
                 <label htmlFor="conversation-instruction">
@@ -167,7 +313,7 @@ export function AuthoringPane({
                 />
                 <button
                   type="submit"
-                  className="button button--primary"
+                  className="workbench-button workbench-button--primary"
                   disabled={instruction.trim() === "" || busy}
                 >
                   {workspace.action === "sending"
@@ -175,107 +321,79 @@ export function AuthoringPane({
                     : "Save instruction"}
                 </button>
               </form>
-            </section>
+            </>
+          )}
+        </article>
+      </div>
 
-            <section
-              className="section-editor"
-              aria-labelledby="section-editor-title"
-            >
-              {section === null ? (
-                <EmptyState
-                  title="No M11 sections"
-                  description="The section catalog could not provide an authoring section."
-                />
-              ) : (
-                <>
-                  <div className="authoring-section-heading">
-                    <div>
-                      <p className="workspace-pane__eyebrow">
-                        Section {section.section_number}
-                      </p>
-                      <h3 id="section-editor-title">{section.title}</h3>
-                    </div>
-                    <span className="revision-label">
-                      Revision {section.current_revision}
-                    </span>
-                  </div>
-                  <form className="section-editor__form" onSubmit={submitSection}>
-                    <label htmlFor="section-instructions">
-                      Section instructions
-                    </label>
-                    <textarea
-                      id="section-instructions"
-                      value={sectionInstructions}
-                      onChange={(event) =>
-                        setSectionInstructions(event.target.value)
-                      }
-                      rows={3}
-                      disabled={busy || section.status === "done"}
-                      placeholder="Add section-specific writing guidance…"
-                    />
-                    <label htmlFor="section-content">Section content</label>
-                    <textarea
-                      id="section-content"
-                      className="section-content-input"
-                      value={sectionContent}
-                      onChange={(event) => setSectionContent(event.target.value)}
-                      rows={10}
-                      disabled={busy || section.status === "done"}
-                      placeholder="Draft the complete section here…"
-                    />
-                    <div className="section-editor__actions">
-                      {section.status === "draft" && (
-                        <>
-                          <button
-                            type="submit"
-                            className="button button--primary"
-                            disabled={!sectionChanged || busy}
-                          >
-                            {workspace.action === "saving"
-                              ? "Saving section…"
-                              : "Save section"}
-                          </button>
-                          <button
-                            type="button"
-                            className="button button--ghost"
-                            onClick={() => void workspace.markDone()}
-                            disabled={sectionChanged || busy}
-                            title={
-                              sectionChanged
-                                ? "Save changes before marking this section done"
-                                : undefined
-                            }
-                          >
-                            {workspace.action === "transitioning"
-                              ? "Updating…"
-                              : "Mark done"}
-                          </button>
-                        </>
-                      )}
-                      {section.status === "done" && (
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          onClick={() => void workspace.reopen()}
-                          disabled={busy}
-                        >
-                          {workspace.action === "transitioning"
-                            ? "Reopening…"
-                            : "Reopen section"}
-                        </button>
-                      )}
-                    </div>
-                    {sectionChanged && section.status === "draft" && (
-                      <p className="editor-hint" role="status">
-                        Save these changes before marking the section done.
-                      </p>
-                    )}
-                  </form>
-                </>
-              )}
-            </section>
+      {view === "document" && section !== null && (
+        <footer className="workbench-actionbar">
+          <p className="workbench-actionbar__hint" role="status">
+            {sectionChanged
+              ? "Unsaved changes"
+              : done
+                ? "Marked done"
+                : "All changes saved"}
+          </p>
+          <div className="workbench-actionbar__actions">
+            {!done && (
+              <>
+                <button
+                  type="button"
+                  className="workbench-button workbench-button--quiet"
+                  disabled={!sectionChanged || busy}
+                  onClick={() => {
+                    setSectionInstructions(section.instructions);
+                    setSectionContent(section.content);
+                  }}
+                >
+                  Discard draft
+                </button>
+                <button
+                  type="button"
+                  className="workbench-button"
+                  disabled={!sectionChanged || busy}
+                  onClick={() =>
+                    void workspace.saveSection(
+                      sectionInstructions,
+                      sectionContent,
+                    )
+                  }
+                >
+                  {workspace.action === "saving" ? "Saving…" : "Save section"}
+                </button>
+                <button
+                  type="button"
+                  className="workbench-button workbench-button--primary"
+                  disabled={sectionChanged || busy}
+                  title={
+                    sectionChanged
+                      ? "Save changes before marking this section done"
+                      : undefined
+                  }
+                  onClick={() => void workspace.markDone()}
+                >
+                  {workspace.action === "transitioning"
+                    ? "Updating…"
+                    : "Mark done"}
+                </button>
+              </>
+            )}
+            {done && (
+              <button
+                type="button"
+                className="workbench-button"
+                disabled={busy}
+                onClick={() => void workspace.reopen()}
+              >
+                {workspace.action === "transitioning"
+                  ? "Reopening…"
+                  : "Reopen section"}
+              </button>
+            )}
           </div>
-        )}
+        </footer>
+      )}
     </section>
   );
 }

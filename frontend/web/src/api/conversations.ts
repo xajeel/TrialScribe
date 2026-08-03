@@ -9,14 +9,72 @@ import type {
 
 const CONVERSATIONS_PATH = "/v1/ai/conversations";
 
-/** List active conversations for the selected organization. */
+export interface ConversationListOptions {
+  archived?: boolean;
+  cursor?: string | null;
+  limit?: number;
+}
+
+/** List active or archived conversations for the selected organization. */
 export function listConversations(
   fetcher: AuthorizedFetch,
   organizationId: string,
+  options: ConversationListOptions = {},
 ): Promise<ConversationPage> {
-  return fetcher<ConversationPage>(`${CONVERSATIONS_PATH}?limit=100`, {
+  const query = new URLSearchParams({
+    limit: String(options.limit ?? 100),
+  });
+  if (options.archived === true) {
+    query.set("archived", "true");
+  }
+  if (options.cursor !== undefined && options.cursor !== null) {
+    query.set("cursor", options.cursor);
+  }
+  return fetcher<ConversationPage>(`${CONVERSATIONS_PATH}?${query.toString()}`, {
     headers: organizationHeaders(organizationId),
   });
+}
+
+/** Read one accessible conversation by identifier. */
+export function getConversation(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<Conversation> {
+  return fetcher<Conversation>(
+    `${CONVERSATIONS_PATH}/${encodeURIComponent(conversationId)}`,
+    { headers: organizationHeaders(organizationId) },
+  );
+}
+
+/** Archive one conversation so authoring actions stop while content stays readable. */
+export function archiveConversation(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<Conversation> {
+  return fetcher<Conversation>(
+    `${CONVERSATIONS_PATH}/${encodeURIComponent(conversationId)}`,
+    {
+      method: "DELETE",
+      headers: organizationHeaders(organizationId),
+    },
+  );
+}
+
+/** Restore one archived conversation to the active library. */
+export function restoreConversation(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<Conversation> {
+  return fetcher<Conversation>(
+    `${CONVERSATIONS_PATH}/${encodeURIComponent(conversationId)}/restore`,
+    {
+      method: "POST",
+      headers: organizationHeaders(organizationId),
+    },
+  );
 }
 
 /** Create a durable conversation in the selected organization. */
