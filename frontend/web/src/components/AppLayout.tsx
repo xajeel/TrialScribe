@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+
+import { BrandLogo } from "./BrandLogo";
 
 /** Accessible responsive frame: skip link, header with actions, main region. */
 export function AppLayout({
@@ -15,9 +16,11 @@ export function AppLayout({
         Skip to main content
       </a>
       <header className="app-header">
-        <Link to="/workspace" className="app-header__brand">
-          TrialScribe
-        </Link>
+        <BrandLogo
+          ariaLabel="TrialScribe protocols"
+          className="app-header__brand"
+          to="/protocols"
+        />
         {actions !== undefined && (
           <nav className="app-header__actions" aria-label="Account">
             {actions}

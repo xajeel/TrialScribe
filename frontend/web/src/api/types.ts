@@ -21,3 +21,133 @@ export interface Organization {
   role: OrganizationRole;
   created_at: string;
 }
+
+export interface OrganizationMembership {
+  id: string;
+  organization_id: string;
+  account_id: string;
+  role: OrganizationRole;
+  created_at: string;
+}
+
+export type InvitationRole = "admin" | "member";
+
+export interface OrganizationInvitation {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: InvitationRole;
+  invited_by_account_id: string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface CreatedOrganizationInvitation
+  extends OrganizationInvitation {
+  accept_url: string;
+}
+
+export type ConversationStatus = "active" | "archived";
+export type MessageRole = "user" | "assistant";
+export type DocumentKind = "trial_data" | "research_document";
+export type DocumentStatus = "pending" | "ready" | "failed";
+export type M11SectionStatus = "draft" | "done";
+export type M11RevisionAction = "revised" | "done" | "reopened";
+
+export interface Conversation {
+  id: string;
+  organization_id: string;
+  owner_account_id: string;
+  title: string;
+  status: ConversationStatus;
+  collaborator_account_ids: string[];
+  created_at: string;
+  updated_at: string;
+  last_activity_at: string;
+  archived_at: string | null;
+}
+
+export interface ConversationPage {
+  items: Conversation[];
+  next_cursor: string | null;
+}
+
+export interface ConversationMessage {
+  id: string;
+  conversation_id: string;
+  organization_id: string;
+  author_account_id: string | null;
+  role: MessageRole;
+  content: string;
+  sequence: number;
+  created_at: string;
+}
+
+export interface ConversationMessagePage {
+  items: ConversationMessage[];
+  next_cursor: string | null;
+}
+
+export interface DocumentRecord {
+  id: string;
+  conversation_id: string;
+  organization_id: string;
+  uploaded_by_account_id: string | null;
+  kind: DocumentKind;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  status: DocumentStatus;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentPage {
+  items: DocumentRecord[];
+  next_cursor: string | null;
+}
+
+export interface M11Section {
+  id: string;
+  conversation_id: string;
+  organization_id: string;
+  catalog_version: string;
+  section_number: string;
+  title: string;
+  position: number;
+  instructions: string;
+  content: string;
+  status: M11SectionStatus;
+  current_revision: number;
+  completed_at: string | null;
+  completed_by_account_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface M11SectionWorkspace {
+  catalog_version: string;
+  items: M11Section[];
+}
+
+export interface M11SectionRevision {
+  id: string;
+  section_id: string;
+  conversation_id: string;
+  organization_id: string;
+  revision_number: number;
+  action: M11RevisionAction;
+  instructions: string;
+  content: string;
+  status: M11SectionStatus;
+  author_account_id: string | null;
+  created_at: string;
+}
+
+export interface M11SectionRevisionPage {
+  items: M11SectionRevision[];
+  next_after_revision: number | null;
+}

@@ -63,6 +63,13 @@ export function AccountMenu() {
           >
             Profile and settings
           </Link>
+          <Link
+            className="account-menu__item"
+            to="/organization/members"
+            onClick={() => setOpen(false)}
+          >
+            Organization access
+          </Link>
           <button
             type="button"
             className="account-menu__item account-menu__item--danger"

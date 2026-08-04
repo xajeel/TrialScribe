@@ -22,6 +22,7 @@ const TOKENS = { access_token: "access-1", token_type: "bearer", expires_in: 900
 const ORGS = [
   { id: "org-1", name: "Acme Trials", role: "owner", created_at: "2026-01-01T00:00:00Z" },
 ];
+const EMPTY_PAGE = { items: [], next_cursor: null };
 const UNAUTHORIZED: MockResponse = {
   status: 401,
   body: { detail: "Invalid authentication credentials" },
@@ -74,11 +75,14 @@ describe("session flow", () => {
       "POST /v1/auth/refresh": { status: 200, body: TOKENS },
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": { status: 200, body: ORGS },
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
     });
 
     renderApp({ route: "/workspace" });
 
-    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
   });
 
@@ -96,6 +100,7 @@ describe("session flow", () => {
       "POST /v1/auth/login": { status: 200, body: TOKENS },
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": { status: 200, body: ORGS },
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
     });
     const user = userEvent.setup();
 
@@ -105,7 +110,9 @@ describe("session flow", () => {
     await user.type(screen.getByLabelText("Password"), "correct-horse-battery");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
   });
 
   it("ignores a stale bootstrap failure after a successful sign-in", async () => {
@@ -130,6 +137,9 @@ describe("session flow", () => {
         if (key === "GET /v1/organizations") {
           return toResponse({ status: 200, body: ORGS });
         }
+        if (key === "GET /v1/ai/conversations") {
+          return toResponse({ status: 200, body: EMPTY_PAGE });
+        }
         throw new Error(`unexpected request: ${key}`);
       }),
     );
@@ -139,14 +149,18 @@ describe("session flow", () => {
     await user.type(screen.getByLabelText("Email"), "user@example.com");
     await user.type(screen.getByLabelText("Password"), "correct-horse-battery");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
 
     await act(async () => {
       resolveBootstrap(toResponse(UNAUTHORIZED));
       await bootstrap;
     });
 
-    expect(screen.getByText(/Signed in as user@example.com/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
   });
 
   it("creates an account from the signup form", async () => {
@@ -156,6 +170,7 @@ describe("session flow", () => {
       "POST /v1/auth/login": { status: 200, body: TOKENS },
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": { status: 200, body: ORGS },
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
     });
     const user = userEvent.setup();
 
@@ -165,7 +180,9 @@ describe("session flow", () => {
     await user.type(screen.getByLabelText("Password"), "correct-horse-battery");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
-    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
   });
 
   it("blocks a too-short signup password before calling the API", async () => {
@@ -190,6 +207,7 @@ describe("session flow", () => {
       "POST /v1/auth/refresh": { status: 200, body: TOKENS },
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": { status: 200, body: ORGS },
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
       "POST /v1/auth/logout": { status: 204 },
     });
     const user = userEvent.setup();
@@ -208,6 +226,7 @@ describe("session flow", () => {
       "POST /v1/auth/refresh": { status: 200, body: TOKENS },
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": { status: 200, body: ORGS },
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
     });
 
     renderApp({ route: "/profile" });
@@ -215,12 +234,10 @@ describe("session flow", () => {
     expect(
       await screen.findByRole("heading", { name: "Profile and settings" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("user@example.com")).toBeInTheDocument();
-    // Listed in the Organizations card and again in the Preferences select.
+    expect(screen.getAllByText("user@example.com")).toHaveLength(2);
     expect(await screen.findAllByText("Acme Trials")).not.toHaveLength(0);
-    expect(
-      screen.getByLabelText("Active organization"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Active workspace")).toBeInTheDocument();
+    expect(screen.getByText("Account ID")).toBeInTheDocument();
   });
 
   it("recovers an expired token by silently refreshing and retrying", async () => {
@@ -229,12 +246,17 @@ describe("session flow", () => {
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       // First org load 401s (expired access token); the retry after refresh succeeds.
       "GET /v1/organizations": [UNAUTHORIZED, { status: 200, body: ORGS }],
+      "GET /v1/ai/conversations": { status: 200, body: EMPTY_PAGE },
     });
 
     renderApp({ route: "/workspace" });
 
-    expect(await screen.findByText(/Signed in as user@example.com/)).toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "Acme Trials" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Protocol workspaces" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: "Acme Trials · Owner" }),
+    ).toBeInTheDocument();
   });
 
   it("redirects to login when the silent refresh also fails", async () => {
@@ -243,6 +265,7 @@ describe("session flow", () => {
       "POST /v1/auth/refresh": [{ status: 200, body: TOKENS }, UNAUTHORIZED],
       "GET /v1/auth/me": { status: 200, body: ACCOUNT },
       "GET /v1/organizations": UNAUTHORIZED,
+      "GET /v1/ai/conversations": UNAUTHORIZED,
     });
 
     renderApp({ route: "/workspace" });
