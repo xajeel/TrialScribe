@@ -96,6 +96,11 @@ function membership(organizationId: string): OrganizationMembership {
     id: "membership-1",
     organization_id: organizationId,
     account_id: ACCOUNT.id,
+    identity: {
+      account_id: ACCOUNT.id,
+      email: ACCOUNT.email,
+      is_active: true,
+    },
     role: "member",
     created_at: "2026-07-28T09:01:00Z",
   };
@@ -110,6 +115,11 @@ function invitation(
     email: "collaborator@example.com",
     role: "admin",
     invited_by_account_id: ACCOUNT.id,
+    invited_by: {
+      account_id: ACCOUNT.id,
+      email: ACCOUNT.email,
+      is_active: true,
+    },
     expires_at: "2026-07-29T09:00:00Z",
     accepted_at: null,
     revoked_at: null,

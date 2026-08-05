@@ -15,8 +15,13 @@ from trialscribe_user.api.dependencies import (
     get_settings,
 )
 from trialscribe_user.config import UserSettings
+from trialscribe_user.models.invitation import Invitation
 from trialscribe_user.models.membership import Membership
 from trialscribe_user.models.organization import Organization
+from trialscribe_user.repositories.identities import (
+    IdentityRepository,
+    OrganizationIdentity,
+)
 from trialscribe_user.repositories.invitations import InvitationRepository
 from trialscribe_user.repositories.memberships import MembershipRepository
 from trialscribe_user.repositories.organizations import OrganizationRepository
@@ -25,6 +30,10 @@ from trialscribe_user.schemas.invitation import (
     InvitationCreateRequest,
     InvitationCreatedResponse,
     InvitationResponse,
+)
+from trialscribe_user.schemas.identity import (
+    IdentityResolutionRequest,
+    OrganizationIdentitySummary,
 )
 from trialscribe_user.schemas.organization import (
     MembershipResponse,
@@ -36,6 +45,7 @@ from trialscribe_user.services.authorization import (
     OrganizationNotFoundError,
     PermissionDeniedError,
 )
+from trialscribe_user.services.directory import IdentityDirectoryService
 from trialscribe_user.services.invitations import (
     InvalidInvitationError,
     InvalidInvitationInput,
@@ -72,6 +82,60 @@ def _organization_response(
     )
 
 
+def _identity_response(identity: OrganizationIdentity) -> OrganizationIdentitySummary:
+    return OrganizationIdentitySummary(
+        account_id=identity.account_id,
+        email=identity.email,
+        is_active=identity.is_active,
+    )
+
+
+def _required_identity(
+    identities: dict[UUID, OrganizationIdentity],
+    account_id: UUID,
+) -> OrganizationIdentity:
+    identity = identities.get(account_id)
+    if identity is None:
+        raise RuntimeError("required organization identity is unavailable")
+    return identity
+
+
+def _membership_response(
+    membership: Membership,
+    identities: dict[UUID, OrganizationIdentity],
+) -> MembershipResponse:
+    return MembershipResponse(
+        id=membership.id,
+        organization_id=membership.organization_id,
+        account_id=membership.account_id,
+        identity=_identity_response(
+            _required_identity(identities, membership.account_id)
+        ),
+        role=membership.role,
+        created_at=membership.created_at,
+    )
+
+
+def _invitation_response(
+    invitation: Invitation,
+    identities: dict[UUID, OrganizationIdentity],
+) -> InvitationResponse:
+    return InvitationResponse(
+        id=invitation.id,
+        organization_id=invitation.organization_id,
+        email=invitation.email,
+        role=invitation.role,
+        invited_by_account_id=invitation.invited_by_account_id,
+        invited_by=_identity_response(
+            _required_identity(identities, invitation.invited_by_account_id)
+        ),
+        expires_at=invitation.expires_at,
+        accepted_at=invitation.accepted_at,
+        revoked_at=invitation.revoked_at,
+        created_at=invitation.created_at,
+    )
+
+
 def _translate_service_error(error: Exception) -> HTTPException:
     if isinstance(error, OrganizationNotFoundError):
         return HTTPException(status_code=404, detail=ORGANIZATION_NOT_FOUND_DETAIL)
@@ -99,6 +163,7 @@ async def create_organization(
             organization, membership = await OrganizationService(
                 OrganizationRepository(session),
                 MembershipRepository(session),
+                IdentityRepository(session),
             ).create_organization(account_id, body.name)
     except Exception as error:
         raise _translate_service_error(error) from None
@@ -156,9 +221,17 @@ async def list_members(
                 OrganizationRepository(session),
                 MembershipRepository(session),
             ).list_members(account_id, organization_id)
+            identity_repository = IdentityRepository(session)
+            identities = await identity_repository.resolve(
+                organization_id,
+                [item.account_id for item in memberships],
+            )
     except Exception as error:
         raise _translate_service_error(error) from None
-    return [MembershipResponse.model_validate(item) for item in memberships]
+    try:
+        return [_membership_response(item, identities) for item in memberships]
+    except Exception as error:
+        raise _translate_service_error(error) from None
 
 
 @router.patch(
@@ -178,9 +251,13 @@ async def change_membership_role(
                 OrganizationRepository(session),
                 MembershipRepository(session),
             ).change_role(account_id, organization_id, target_account_id, body.role)
+            identities = await IdentityRepository(session).resolve(
+                organization_id,
+                [membership.account_id],
+            )
     except Exception as error:
         raise _translate_service_error(error) from None
-    return MembershipResponse.model_validate(membership)
+    return _membership_response(membership, identities)
 
 
 @router.delete(
@@ -223,11 +300,16 @@ async def create_invitation(
                 InvitationRepository(session),
                 MembershipRepository(session),
                 settings,
+                IdentityRepository(session),
             ).create_invitation(account_id, organization_id, body.email, body.role, now)
+            identities = await IdentityRepository(session).resolve(
+                organization_id,
+                [invitation.invited_by_account_id],
+            )
     except Exception as error:
         raise _translate_service_error(error) from None
     return InvitationCreatedResponse(
-        **InvitationResponse.model_validate(invitation).model_dump(),
+        **_invitation_response(invitation, identities).model_dump(),
         accept_url=accept_url,
     )
 
@@ -249,9 +331,16 @@ async def list_invitations(
                 MembershipRepository(session),
                 settings,
             ).list_invitations(account_id, organization_id)
+            identities = await IdentityRepository(session).resolve(
+                organization_id,
+                [item.invited_by_account_id for item in invitations],
+            )
     except Exception as error:
         raise _translate_service_error(error) from None
-    return [InvitationResponse.model_validate(item) for item in invitations]
+    try:
+        return [_invitation_response(item, identities) for item in invitations]
+    except Exception as error:
+        raise _translate_service_error(error) from None
 
 
 @router.delete(
@@ -300,7 +389,37 @@ async def accept_invitation(
                 InvitationRepository(session),
                 MembershipRepository(session),
                 settings,
+                IdentityRepository(session),
             ).accept_invitation(body.token, account_id, now)
+            identities = await IdentityRepository(session).resolve(
+                membership.organization_id,
+                [membership.account_id],
+            )
     except Exception as error:
         raise _translate_service_error(error) from None
-    return MembershipResponse.model_validate(membership)
+    return _membership_response(membership, identities)
+
+
+@router.post(
+    "/v1/organizations/{organization_id}/identity-summaries/resolve",
+    response_model=list[OrganizationIdentitySummary],
+)
+async def resolve_identities(
+    organization_id: UUID,
+    body: IdentityResolutionRequest,
+    account_id: Annotated[UUID, Depends(get_current_account_id)],
+    database: Annotated[DatabaseRuntime, Depends(get_database_runtime)],
+) -> list[OrganizationIdentitySummary]:
+    try:
+        async with database.transaction() as session:
+            identities = await IdentityDirectoryService(
+                MembershipRepository(session),
+                IdentityRepository(session),
+            ).resolve(account_id, organization_id, body.account_ids)
+    except Exception as error:
+        raise _translate_service_error(error) from None
+    return [
+        _identity_response(identities[item])
+        for item in body.account_ids
+        if item in identities
+    ]

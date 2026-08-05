@@ -1,11 +1,14 @@
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
+from trialscribe_user.models.identity import OrganizationIdentityLink
 from trialscribe_user.models.invitation import Invitation
 from trialscribe_user.models.membership import Membership
 from trialscribe_user.models.organization import Organization
 
 
-def named_constraints(model: type[Organization | Membership | Invitation]) -> set[str]:
+def named_constraints(
+    model: type[Organization | Membership | Invitation | OrganizationIdentityLink],
+) -> set[str]:
     return {
         constraint.name
         for constraint in model.__table__.constraints
@@ -13,7 +16,9 @@ def named_constraints(model: type[Organization | Membership | Invitation]) -> se
     }
 
 
-def foreign_keys(model: type[Membership | Invitation]) -> dict[str, tuple[str, str | None]]:
+def foreign_keys(
+    model: type[Membership | Invitation | OrganizationIdentityLink],
+) -> dict[str, tuple[str, str | None]]:
     return {
         constraint.name: (
             next(iter(constraint.elements)).target_fullname,
@@ -82,6 +87,35 @@ def test_invitation_stores_only_hash_and_single_pending_email_index() -> None:
     assert next(iter(columns.invited_by_account_id.foreign_keys)).use_alter is True
 
 
+def test_identity_link_is_unique_scoped_and_contains_no_account_data() -> None:
+    columns = OrganizationIdentityLink.__table__.columns
+
+    assert columns.id.primary_key is True
+    assert columns.organization_id.nullable is False
+    assert columns.account_id.nullable is False
+    assert "email" not in columns
+    assert "is_active" not in columns
+    assert (
+        "uq_organization_identity_links_organization_id_account_id"
+        in named_constraints(OrganizationIdentityLink)
+    )
+    assert {index.name for index in OrganizationIdentityLink.__table__.indexes} == {
+        "ix_organization_identity_links_account_id",
+        "ix_organization_identity_links_organization_id",
+    }
+    assert foreign_keys(OrganizationIdentityLink) == {
+        "fk_organization_identity_links_account_id_accounts": (
+            "trialscribe.accounts.id",
+            "CASCADE",
+        ),
+        "fk_organization_identity_links_organization_id_organizations": (
+            "trialscribe.organizations.id",
+            "CASCADE",
+        ),
+    }
+    assert next(iter(columns.account_id.foreign_keys)).use_alter is True
+
+
 def test_every_organization_foreign_key_is_deterministically_named() -> None:
     assert foreign_keys(Invitation) == {
         "fk_organization_invitations_invited_by_account_id_accounts": (
@@ -95,7 +129,12 @@ def test_every_organization_foreign_key_is_deterministically_named() -> None:
     }
     assert all(
         isinstance(constraint, (CheckConstraint, UniqueConstraint))
-        for table in (Organization.__table__, Membership.__table__, Invitation.__table__)
+        for table in (
+            Organization.__table__,
+            Membership.__table__,
+            Invitation.__table__,
+            OrganizationIdentityLink.__table__,
+        )
         for constraint in table.constraints
         if constraint.name and constraint.name.startswith(("ck_", "uq_"))
     )

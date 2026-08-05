@@ -89,9 +89,17 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
         revision,
         activeSection?.current_revision ?? 0,
         account?.id ?? null,
+        history.identities,
       ),
     );
-  }, [account?.id, activeSection?.current_revision, history.revisions, review, reviewing]);
+  }, [
+    account?.id,
+    activeSection?.current_revision,
+    history.identities,
+    history.revisions,
+    review,
+    reviewing,
+  ]);
 
   const [filters, setFilters] = useState<RevisionFiltersValue>(
     EMPTY_REVISION_FILTERS,

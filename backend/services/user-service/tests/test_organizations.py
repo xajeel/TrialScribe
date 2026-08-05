@@ -77,6 +77,14 @@ class FakeMembershipRepository:
         self.memberships.remove(membership)
 
 
+class FakeIdentityRepository:
+    def __init__(self) -> None:
+        self.associations: set[tuple[UUID, UUID]] = set()
+
+    async def associate(self, organization_id: UUID, account_id: UUID) -> None:
+        self.associations.add((organization_id, account_id))
+
+
 def make_membership(account_id: UUID, role: MembershipRole) -> Membership:
     return Membership(
         id=uuid4(),
@@ -88,15 +96,25 @@ def make_membership(account_id: UUID, role: MembershipRole) -> Membership:
 
 def service_with(
     memberships: list[Membership] | None = None,
-) -> tuple[OrganizationService, FakeOrganizationRepository, FakeMembershipRepository]:
+) -> tuple[
+    OrganizationService,
+    FakeOrganizationRepository,
+    FakeMembershipRepository,
+    FakeIdentityRepository,
+]:
     organizations = FakeOrganizationRepository()
     membership_repository = FakeMembershipRepository(memberships)
-    service = OrganizationService(organizations, membership_repository)  # type: ignore[arg-type]
-    return service, organizations, membership_repository
+    identity_repository = FakeIdentityRepository()
+    service = OrganizationService(  # type: ignore[arg-type]
+        organizations,
+        membership_repository,
+        identity_repository,
+    )
+    return service, organizations, membership_repository, identity_repository
 
 
 def test_create_organization_trims_name_and_assigns_owner_atomically() -> None:
-    service, organizations, memberships = service_with()
+    service, organizations, memberships, identities = service_with()
 
     organization, membership = asyncio.run(
         service.create_organization(OWNER_ID, "  Research Team  ")
@@ -108,18 +126,19 @@ def test_create_organization_trims_name_and_assigns_owner_atomically() -> None:
     assert membership.account_id == OWNER_ID
     assert membership.role == MembershipRole.OWNER.value
     assert memberships.memberships == [membership]
+    assert identities.associations == {(ORGANIZATION_ID, OWNER_ID)}
 
 
 @pytest.mark.parametrize("name", ["", "   ", "x" * 121])
 def test_invalid_organization_names_are_rejected(name: str) -> None:
-    service, _, _ = service_with()
+    service, _, _, _ = service_with()
 
     with pytest.raises(InvalidOrganizationInput):
         asyncio.run(service.create_organization(OWNER_ID, name))
 
 
 def test_owner_can_promote_member_when_rows_are_locked() -> None:
-    service, _, repository = service_with(
+    service, _, repository, _ = service_with(
         [
             make_membership(OWNER_ID, MembershipRole.OWNER),
             make_membership(MEMBER_ID, MembershipRole.MEMBER),
@@ -135,7 +154,7 @@ def test_owner_can_promote_member_when_rows_are_locked() -> None:
 
 
 def test_last_owner_cannot_remove_or_demote_self() -> None:
-    service, _, repository = service_with(
+    service, _, repository, _ = service_with(
         [make_membership(OWNER_ID, MembershipRole.OWNER)]
     )
 
@@ -155,7 +174,7 @@ def test_last_owner_cannot_remove_or_demote_self() -> None:
 
 
 def test_owner_handoff_is_allowed_when_another_owner_remains() -> None:
-    service, _, repository = service_with(
+    service, _, repository, _ = service_with(
         [
             make_membership(OWNER_ID, MembershipRole.OWNER),
             make_membership(SECOND_OWNER_ID, MembershipRole.OWNER),
@@ -168,7 +187,7 @@ def test_owner_handoff_is_allowed_when_another_owner_remains() -> None:
 
 
 def test_admin_can_remove_members_but_not_admins_or_owners() -> None:
-    service, _, repository = service_with(
+    service, _, repository, identities = service_with(
         [
             make_membership(OWNER_ID, MembershipRole.OWNER),
             make_membership(ADMIN_ID, MembershipRole.ADMIN),
@@ -178,6 +197,7 @@ def test_admin_can_remove_members_but_not_admins_or_owners() -> None:
 
     asyncio.run(service.remove_member(ADMIN_ID, ORGANIZATION_ID, MEMBER_ID))
     assert MEMBER_ID not in {item.account_id for item in repository.memberships}
+    assert identities.associations == set()
 
     with pytest.raises(PermissionDeniedError):
         asyncio.run(service.remove_member(ADMIN_ID, ORGANIZATION_ID, OWNER_ID))

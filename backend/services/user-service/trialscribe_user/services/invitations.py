@@ -8,6 +8,7 @@ from email_validator import EmailNotValidError, validate_email
 from trialscribe_user.config import UserSettings
 from trialscribe_user.models.invitation import Invitation
 from trialscribe_user.models.membership import Membership, MembershipRole
+from trialscribe_user.repositories.identities import IdentityRepository
 from trialscribe_user.repositories.invitations import (
     DuplicateInvitationError,
     InvitationRepository,
@@ -56,9 +57,11 @@ class InvitationService:
         invitations: InvitationRepository,
         memberships: MembershipRepository,
         settings: UserSettings,
+        identities: IdentityRepository | None = None,
     ) -> None:
         self._invitations = invitations
         self._memberships = memberships
+        self._identities = identities
         self._authorization = AuthorizationService(memberships)
         self._settings = settings
 
@@ -200,6 +203,8 @@ class InvitationService:
             raise InvitationConflictError(
                 "Account already belongs to organization"
             ) from None
+        if self._identities is not None:
+            await self._identities.associate(invitation.organization_id, account_id)
         invitation.accepted_at = accepted_at
         await self._invitations.flush()
         return membership

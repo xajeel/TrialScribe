@@ -30,6 +30,11 @@ function membership(organizationId: string, id = account.id): OrganizationMember
     id: `membership-${organizationId}-${id}`,
     organization_id: organizationId,
     account_id: id,
+    identity: {
+      account_id: id,
+      email: id === account.id ? account.email : `${id}@example.com`,
+      is_active: true,
+    },
     role: id === account.id ? "owner" : "member",
     created_at: "2026-07-29T09:00:00Z",
   };
@@ -154,12 +159,12 @@ describe("MembersPage", () => {
     ]);
     view.rerender(page(second));
 
-    expect(await screen.findByText(/Member second-a/)).toBeInTheDocument();
+    expect(await screen.findByText("second-account@example.com")).toBeInTheDocument();
     await act(async () => {
       resolveFirst([membership("org-live", "stale-account")]);
       await firstMembers;
     });
-    expect(screen.queryByText(/stale-acc/)).not.toBeInTheDocument();
+    expect(screen.queryByText("stale-account@example.com")).not.toBeInTheDocument();
   });
 
   it("keeps review mutations local and renders success/error variants", async () => {

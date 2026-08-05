@@ -74,6 +74,11 @@ const MEMBER_ROWS: ReadonlyArray<OrganizationMembership> = [
     id: "membership-maya",
     organization_id: ORGANIZATION_REVIEW_OWNER.id,
     account_id: ACCOUNT_REVIEW.id,
+    identity: {
+      account_id: ACCOUNT_REVIEW.id,
+      email: ACCOUNT_REVIEW.email,
+      is_active: true,
+    },
     role: "owner",
     created_at: "2026-07-15T14:24:00Z",
   },
@@ -81,6 +86,11 @@ const MEMBER_ROWS: ReadonlyArray<OrganizationMembership> = [
     id: "membership-omar",
     organization_id: ORGANIZATION_REVIEW_OWNER.id,
     account_id: "acc-omar-a20d-47d2-8064",
+    identity: {
+      account_id: "acc-omar-a20d-47d2-8064",
+      email: "omar.shah@northstar-cr.org",
+      is_active: true,
+    },
     role: "admin",
     created_at: "2026-07-18T09:20:00Z",
   },
@@ -88,6 +98,11 @@ const MEMBER_ROWS: ReadonlyArray<OrganizationMembership> = [
     id: "membership-elena",
     organization_id: ORGANIZATION_REVIEW_OWNER.id,
     account_id: "acc-elena-b103-4c18-7231",
+    identity: {
+      account_id: "acc-elena-b103-4c18-7231",
+      email: "elena.garcia@northstar-cr.org",
+      is_active: false,
+    },
     role: "member",
     created_at: "2026-07-21T12:05:00Z",
   },
@@ -100,6 +115,11 @@ const INVITATION_ROWS: ReadonlyArray<OrganizationInvitation> = [
     email: "collaborator@example.com",
     role: "member",
     invited_by_account_id: ACCOUNT_REVIEW.id,
+    invited_by: {
+      account_id: ACCOUNT_REVIEW.id,
+      email: ACCOUNT_REVIEW.email,
+      is_active: true,
+    },
     expires_at: "2026-08-05T12:00:00Z",
     accepted_at: null,
     revoked_at: null,
@@ -111,6 +131,11 @@ const INVITATION_ROWS: ReadonlyArray<OrganizationInvitation> = [
     email: "accepted@example.com",
     role: "admin",
     invited_by_account_id: ACCOUNT_REVIEW.id,
+    invited_by: {
+      account_id: ACCOUNT_REVIEW.id,
+      email: ACCOUNT_REVIEW.email,
+      is_active: true,
+    },
     expires_at: "2026-08-04T12:00:00Z",
     accepted_at: "2026-08-02T09:00:00Z",
     revoked_at: null,
@@ -122,6 +147,11 @@ const INVITATION_ROWS: ReadonlyArray<OrganizationInvitation> = [
     email: "expired@example.com",
     role: "member",
     invited_by_account_id: "acc-omar-a20d-47d2-8064",
+    invited_by: {
+      account_id: "acc-omar-a20d-47d2-8064",
+      email: "omar.shah@northstar-cr.org",
+      is_active: true,
+    },
     expires_at: "2026-07-28T12:00:00Z",
     accepted_at: null,
     revoked_at: null,
@@ -223,9 +253,11 @@ export function memberIdentity(
   account: Account,
 ): { primary: string; secondary: string } {
   return membership.account_id === account.id
-    ? { primary: "You", secondary: account.email }
+    ? { primary: "You", secondary: membership.identity.email }
     : {
-        primary: `Member ${shortIdentifier(membership.account_id)}`,
-        secondary: "Account identifier",
+        primary: membership.identity.email,
+        secondary: membership.identity.is_active
+          ? "Active account"
+          : "Inactive account",
       };
 }

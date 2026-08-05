@@ -18,6 +18,7 @@ from trialscribe_user.api.dependencies import (
 from trialscribe_user.models.invitation import Invitation
 from trialscribe_user.models.membership import Membership, MembershipRole
 from trialscribe_user.models.organization import Organization
+from trialscribe_user.repositories.identities import OrganizationIdentity
 from trialscribe_user.services.authorization import (
     OrganizationNotFoundError,
     PermissionDeniedError,
@@ -30,6 +31,19 @@ ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000041")
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000042")
 TARGET_ID = UUID("00000000-0000-4000-8000-000000000043")
 INVITATION_ID = UUID("00000000-0000-4000-8000-000000000044")
+
+IDENTITIES = {
+    ACCOUNT_ID: OrganizationIdentity(
+        account_id=ACCOUNT_ID,
+        email="owner@example.com",
+        is_active=True,
+    ),
+    TARGET_ID: OrganizationIdentity(
+        account_id=TARGET_ID,
+        email="member@example.com",
+        is_active=False,
+    ),
+}
 
 
 class FakeDatabaseRuntime:
@@ -150,6 +164,27 @@ class FakeInvitationService:
         return self.organization_service.membership(account_id, MembershipRole.MEMBER)
 
 
+class FakeIdentityRepository:
+    async def resolve(
+        self,
+        _organization_id: UUID,
+        account_ids: list[UUID],
+    ) -> dict[UUID, OrganizationIdentity]:
+        return {item: IDENTITIES[item] for item in account_ids if item in IDENTITIES}
+
+
+class FakeDirectoryService:
+    async def resolve(
+        self,
+        _account_id: UUID,
+        organization_id: UUID,
+        account_ids: list[UUID],
+    ) -> dict[UUID, OrganizationIdentity]:
+        if organization_id != ORGANIZATION_ID:
+            raise OrganizationNotFoundError("hidden")
+        return {item: IDENTITIES[item] for item in account_ids if item in IDENTITIES}
+
+
 @pytest.fixture
 def api_context(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     organization_service = FakeOrganizationService()
@@ -158,6 +193,8 @@ def api_context(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         routes, "OrganizationService", lambda *_args: organization_service
     )
     monkeypatch.setattr(routes, "InvitationService", lambda *_args: invitation_service)
+    monkeypatch.setattr(routes, "IdentityRepository", lambda *_args: FakeIdentityRepository())
+    monkeypatch.setattr(routes, "IdentityDirectoryService", lambda *_args: FakeDirectoryService())
     app.dependency_overrides[get_current_account_id] = lambda: ACCOUNT_ID
     app.dependency_overrides[get_database_runtime] = lambda: FakeDatabaseRuntime()
     app.dependency_overrides[get_settings] = lambda: object()
@@ -200,6 +237,13 @@ def test_organization_free_then_create_list_and_read(
     assert listed.json()[0]["id"] == str(ORGANIZATION_ID)
     assert fetched.json()["name"] == "Research Team"
     assert {item["role"] for item in members.json()} == {"owner", "member"}
+    by_account = {item["account_id"]: item["identity"] for item in members.json()}
+    assert by_account[str(ACCOUNT_ID)]["email"] == "owner@example.com"
+    assert by_account[str(TARGET_ID)] == {
+        "account_id": str(TARGET_ID),
+        "email": "member@example.com",
+        "is_active": False,
+    }
 
 
 def test_membership_updates_and_errors_are_stable(api_context: dict[str, Any]) -> None:
@@ -218,6 +262,7 @@ def test_membership_updates_and_errors_are_stable(api_context: dict[str, Any]) -
     )
 
     assert changed.json()["role"] == "admin"
+    assert changed.json()["identity"]["email"] == "member@example.com"
     assert hidden.status_code == 404
     assert hidden.json() == {"detail": "Organization not found"}
     assert forbidden.status_code == 403
@@ -245,7 +290,10 @@ def test_invitation_routes_return_secret_only_on_creation(
     assert "token=secret" in created.json()["accept_url"]
     assert "accept_url" not in listed.json()[0]
     assert "token_hash" not in listed.text
+    assert created.json()["invited_by"]["email"] == "owner@example.com"
+    assert listed.json()[0]["invited_by"] == created.json()["invited_by"]
     assert accepted.json()["account_id"] == str(ACCOUNT_ID)
+    assert accepted.json()["identity"]["email"] == "owner@example.com"
     assert revoked.status_code == 204
 
 
@@ -278,3 +326,40 @@ def test_validation_never_echoes_invitation_secret(api_context: dict[str, Any]) 
     assert "input" not in response.text
     assert invalid_role.status_code == 422
     assert "input" not in invalid_role.text
+
+
+def test_identity_resolution_is_bounded_and_omits_unknown_accounts(
+    api_context: dict[str, Any],
+) -> None:
+    client = api_context["client"]
+    unknown = uuid4()
+
+    resolved = client.post(
+        f"/v1/organizations/{ORGANIZATION_ID}/identity-summaries/resolve",
+        json={"account_ids": [str(TARGET_ID), str(unknown)]},
+    )
+    duplicate = client.post(
+        f"/v1/organizations/{ORGANIZATION_ID}/identity-summaries/resolve",
+        json={"account_ids": [str(TARGET_ID), str(TARGET_ID)]},
+    )
+    oversized = client.post(
+        f"/v1/organizations/{ORGANIZATION_ID}/identity-summaries/resolve",
+        json={"account_ids": [str(UUID(int=value)) for value in range(1, 102)]},
+    )
+    foreign = client.post(
+        f"/v1/organizations/{uuid4()}/identity-summaries/resolve",
+        json={"account_ids": [str(TARGET_ID)]},
+    )
+
+    assert resolved.status_code == 200
+    assert resolved.json() == [
+        {
+            "account_id": str(TARGET_ID),
+            "email": "member@example.com",
+            "is_active": False,
+        }
+    ]
+    assert duplicate.status_code == 422
+    assert oversized.status_code == 422
+    assert foreign.status_code == 404
+    assert foreign.json() == {"detail": "Organization not found"}

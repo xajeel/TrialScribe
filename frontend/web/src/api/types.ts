@@ -22,10 +22,17 @@ export interface Organization {
   created_at: string;
 }
 
+export interface OrganizationIdentitySummary {
+  account_id: string;
+  email: string;
+  is_active: boolean;
+}
+
 export interface OrganizationMembership {
   id: string;
   organization_id: string;
   account_id: string;
+  identity: OrganizationIdentitySummary;
   role: OrganizationRole;
   created_at: string;
 }
@@ -38,6 +45,7 @@ export interface OrganizationInvitation {
   email: string;
   role: InvitationRole;
   invited_by_account_id: string;
+  invited_by: OrganizationIdentitySummary;
   expires_at: string;
   accepted_at: string | null;
   revoked_at: string | null;

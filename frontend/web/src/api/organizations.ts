@@ -1,6 +1,7 @@
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import type {
   Organization,
+  OrganizationIdentitySummary,
   OrganizationMembership,
   OrganizationRole,
 } from "./types";
@@ -10,6 +11,18 @@ export function listOrganizations(
   fetcher: AuthorizedFetch,
 ): Promise<Organization[]> {
   return fetcher<Organization[]>("/v1/organizations");
+}
+
+/** Resolve a bounded set of identities already associated with one organization. */
+export function resolveOrganizationIdentities(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  accountIds: ReadonlyArray<string>,
+): Promise<OrganizationIdentitySummary[]> {
+  return fetcher<OrganizationIdentitySummary[]>(
+    `/v1/organizations/${organizationId}/identity-summaries/resolve`,
+    { method: "POST", json: { account_ids: accountIds } },
+  );
 }
 
 /** Create an organization owned by the current account. */

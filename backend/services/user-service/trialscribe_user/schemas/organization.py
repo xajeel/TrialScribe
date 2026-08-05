@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from trialscribe_user.schemas.identity import OrganizationIdentitySummary
+
 OrganizationRole = Literal["owner", "admin", "member"]
 
 
@@ -34,6 +36,7 @@ class MembershipResponse(BaseModel):
     id: UUID
     organization_id: UUID
     account_id: UUID
+    identity: OrganizationIdentitySummary
     role: OrganizationRole
     created_at: datetime
 

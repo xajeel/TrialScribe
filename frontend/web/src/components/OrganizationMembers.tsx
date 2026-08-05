@@ -12,7 +12,6 @@ import {
   invitationDisplayStatus,
   memberIdentity,
   roleLabel,
-  shortIdentifier,
 } from "../product/accountAccessReviewFixtures";
 
 type LoadStatus = "loading" | "ready" | "error";
@@ -201,7 +200,9 @@ export function OrganizationMembers({
                     <tr key={membership.id}>
                       <th scope="row" data-label="Member">
                         <span className="organization-members__avatar" aria-hidden="true">
-                          {currentAccount ? "YO" : shortIdentifier(membership.account_id).slice(0, 2).toUpperCase()}
+                          {currentAccount
+                            ? "YO"
+                            : membership.identity.email.slice(0, 2).toUpperCase()}
                         </span>
                         <span>
                           <strong>{identity.primary}</strong>
@@ -233,7 +234,9 @@ export function OrganizationMembers({
                       </td>
                       <td data-label="Joined">{displayDate(membership.created_at)}</td>
                       <td data-label="Status">
-                        <span className="organization-members__active">Active</span>
+                        <span className="organization-members__active">
+                          {membership.identity.is_active ? "Active" : "Inactive"}
+                        </span>
                       </td>
                       {privileged && (
                         <td data-label="Actions" className="organization-members__actions">
@@ -349,7 +352,7 @@ export function OrganizationMembers({
                             <td data-label="Invited by">
                               {invitation.invited_by_account_id === account.id
                                 ? "You"
-                                : shortIdentifier(invitation.invited_by_account_id)}
+                                : invitation.invited_by.email}
                             </td>
                             <td data-label="Created">{displayDate(invitation.created_at)}</td>
                             <td data-label="Expires">{displayDate(invitation.expires_at)}</td>

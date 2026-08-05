@@ -82,10 +82,35 @@ describe("governance review models", () => {
       author_account_id: "account-2",
       created_at: "2026-07-03T00:00:00Z",
     };
-    const mapped = revisionViewFromApi(record, 2, "account-1");
+    const mapped = revisionViewFromApi(record, 2, "account-1", {
+      "account-2": {
+        account_id: "account-2",
+        email: "collaborator@example.com",
+        is_active: true,
+      },
+    });
     expect(mapped.actionLabel).toBe("Marked done");
-    expect(mapped.authorLabel).toBe("Collaborator");
+    expect(mapped.authorLabel).toBe("collaborator@example.com");
     expect(mapped.current).toBe(true);
+    expect(revisionViewFromApi(record, 2, "account-1", {}).authorLabel).toBe(
+      "Unavailable account",
+    );
+    expect(
+      revisionViewFromApi(
+        { ...record, author_account_id: "account-1" },
+        2,
+        "account-1",
+        {},
+      ).authorLabel,
+    ).toBe("You");
+    expect(
+      revisionViewFromApi(
+        { ...record, author_account_id: null },
+        2,
+        "account-1",
+        {},
+      ).authorLabel,
+    ).toBe("System");
   });
 
   it("keeps sections in catalog order and omits unknown citation facts", () => {

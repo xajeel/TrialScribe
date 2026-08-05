@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { listM11SectionRevisions } from "../api/m11Sections";
-import type { M11SectionRevision } from "../api/types";
+import { resolveOrganizationIdentities } from "../api/organizations";
+import type {
+  M11SectionRevision,
+  OrganizationIdentitySummary,
+} from "../api/types";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 
 export type RevisionHistoryStatus = "idle" | "loading" | "ready" | "error";
@@ -9,12 +13,14 @@ export type RevisionHistoryStatus = "idle" | "loading" | "ready" | "error";
 export interface RevisionHistoryController {
   status: RevisionHistoryStatus;
   revisions: M11SectionRevision[];
+  identities: Readonly<Record<string, OrganizationIdentitySummary>>;
   error: string | null;
   retry: () => void;
 }
 
 export const REVISION_HISTORY_FAILURE = "Could not load revision history.";
 const REVISION_PAGE_LIMIT = 100;
+const IDENTITY_RESOLUTION_LIMIT = 100;
 
 /** Load every immutable snapshot for one section and expose newest first. */
 export function useRevisionHistory(
@@ -25,6 +31,9 @@ export function useRevisionHistory(
 ): RevisionHistoryController {
   const [status, setStatus] = useState<RevisionHistoryStatus>("idle");
   const [revisions, setRevisions] = useState<M11SectionRevision[]>([]);
+  const [identities, setIdentities] = useState<
+    Readonly<Record<string, OrganizationIdentitySummary>>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
@@ -33,6 +42,7 @@ export function useRevisionHistory(
     generation.current += 1;
     const expected = generation.current;
     setRevisions([]);
+    setIdentities({});
     setError(null);
 
     if (
@@ -45,7 +55,10 @@ export function useRevisionHistory(
     }
 
     setStatus("loading");
-    const load = async (): Promise<M11SectionRevision[]> => {
+    const load = async (): Promise<{
+      revisions: M11SectionRevision[];
+      identities: Readonly<Record<string, OrganizationIdentitySummary>>;
+    }> => {
       const items: M11SectionRevision[] = [];
       let cursor = 0;
       while (true) {
@@ -66,17 +79,47 @@ export function useRevisionHistory(
         }
         cursor = page.next_after_revision;
       }
-      return items.sort(
+      const ordered = items.sort(
         (left, right) => right.revision_number - left.revision_number,
       );
+      const authorIds = [
+        ...new Set(
+          ordered.flatMap((revision) =>
+            revision.author_account_id === null
+              ? []
+              : [revision.author_account_id],
+          ),
+        ),
+      ];
+      const resolved: OrganizationIdentitySummary[] = [];
+      for (
+        let offset = 0;
+        offset < authorIds.length;
+        offset += IDENTITY_RESOLUTION_LIMIT
+      ) {
+        resolved.push(
+          ...(await resolveOrganizationIdentities(
+            fetcher,
+            organizationId,
+            authorIds.slice(offset, offset + IDENTITY_RESOLUTION_LIMIT),
+          )),
+        );
+      }
+      return {
+        revisions: ordered,
+        identities: Object.fromEntries(
+          resolved.map((identity) => [identity.account_id, identity]),
+        ),
+      };
     };
 
     void load()
-      .then((items) => {
+      .then((result) => {
         if (generation.current !== expected) {
           return;
         }
-        setRevisions(items);
+        setRevisions(result.revisions);
+        setIdentities(result.identities);
         setStatus("ready");
       })
       .catch(() => {
@@ -92,5 +135,5 @@ export function useRevisionHistory(
     setReload((value) => value + 1);
   }, []);
 
-  return { status, revisions, error, retry };
+  return { status, revisions, identities, error, retry };
 }
