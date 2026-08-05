@@ -4,6 +4,7 @@ import {
   changeOrganizationMemberRole,
   listOrganizationMembers,
   removeOrganizationMember,
+  resolveOrganizationIdentities,
 } from "../api/organizations";
 import {
   listOrganizationInvitations,
@@ -57,8 +58,12 @@ describe("account and access review models", () => {
       primary: "You",
       secondary: ACCOUNT_REVIEW.email,
     });
-    expect(memberIdentity(fixture.memberships[1], ACCOUNT_REVIEW).primary).toMatch(
-      /^Member acc-omar…8064$/,
+    expect(memberIdentity(fixture.memberships[1], ACCOUNT_REVIEW)).toEqual({
+      primary: "omar.shah@northstar-cr.org",
+      secondary: "Active account",
+    });
+    expect(memberIdentity(fixture.memberships[2], ACCOUNT_REVIEW).secondary).toBe(
+      "Inactive account",
     );
     expect(shortIdentifier("short-id")).toBe("short-id");
     expect(
@@ -94,6 +99,7 @@ describe("account and access review models", () => {
     await removeOrganizationMember(fetcher, "org-1", "account-2");
     await listOrganizationInvitations(fetcher, "org-1");
     await revokeOrganizationInvitation(fetcher, "org-1", "invite-1");
+    await resolveOrganizationIdentities(fetcher, "org-1", ["account-2"]);
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
@@ -108,6 +114,11 @@ describe("account and access review models", () => {
       3,
       "/v1/organizations/org-1/members/account-2",
       { method: "DELETE" },
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      6,
+      "/v1/organizations/org-1/identity-summaries/resolve",
+      { method: "POST", json: { account_ids: ["account-2"] } },
     );
     expect(fetcher).toHaveBeenNthCalledWith(
       4,

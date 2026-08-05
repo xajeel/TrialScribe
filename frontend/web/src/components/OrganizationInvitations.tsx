@@ -38,6 +38,11 @@ function reviewInvitation(
     email,
     role,
     invited_by_account_id: "review-current-account",
+    invited_by: {
+      account_id: "review-current-account",
+      email: "reviewer@example.com",
+      is_active: true,
+    },
     expires_at: "2026-08-10T12:00:00Z",
     accepted_at: null,
     revoked_at: null,

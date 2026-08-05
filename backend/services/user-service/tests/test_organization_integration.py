@@ -37,6 +37,7 @@ NEW_ACCOUNT_ID = UUID("10000000-0000-4000-8000-000000000004")
 REPLAY_ID = UUID("10000000-0000-4000-8000-000000000005")
 REVOKED_ID = UUID("10000000-0000-4000-8000-000000000006")
 EXPIRED_ID = UUID("10000000-0000-4000-8000-000000000007")
+FOREIGN_ID = UUID("10000000-0000-4000-8000-000000000008")
 EMAILS = {
     OWNER_ID: "owner@example.com",
     ADMIN_ID: "admin@example.com",
@@ -45,6 +46,7 @@ EMAILS = {
     REPLAY_ID: "replay@example.com",
     REVOKED_ID: "revoked@example.com",
     EXPIRED_ID: "expired@example.com",
+    FOREIGN_ID: "foreign@example.com",
 }
 
 
@@ -143,13 +145,34 @@ def accept_invitation(client: TestClient, account_id: UUID, token: str) -> Any:
     )
 
 
+def resolve_identities(
+    client: TestClient,
+    organization_id: str,
+    actor_id: UUID,
+    account_ids: list[UUID],
+) -> Any:
+    return client.post(
+        f"/v1/organizations/{organization_id}/identity-summaries/resolve",
+        headers=headers(actor_id),
+        json={"account_ids": [str(account_id) for account_id in account_ids]},
+    )
+
+
 def test_prepare_complete_organization_lifecycle() -> None:
     require_phase("prepare")
     assert "auth_jwt_private_key_b64" not in UserSettings.model_fields
     assert not hasattr(AccessTokenVerifier(UserSettings()), "issue_access_token")
     asyncio.run(
         insert_accounts(
-            [OWNER_ID, ADMIN_ID, MEMBER_ID, REPLAY_ID, REVOKED_ID, EXPIRED_ID]
+            [
+                OWNER_ID,
+                ADMIN_ID,
+                MEMBER_ID,
+                REPLAY_ID,
+                REVOKED_ID,
+                EXPIRED_ID,
+                FOREIGN_ID,
+            ]
         )
     )
 
@@ -173,6 +196,12 @@ def test_prepare_complete_organization_lifecycle() -> None:
         )
         assert second.status_code == 201
         assert len(client.get("/v1/organizations", headers=headers(OWNER_ID)).json()) == 2
+        foreign = client.post(
+            "/v1/organizations",
+            headers=headers(FOREIGN_ID),
+            json={"name": "Foreign Research"},
+        )
+        assert foreign.status_code == 201
 
         admin_invite = create_invitation(
             client,
@@ -182,6 +211,11 @@ def test_prepare_complete_organization_lifecycle() -> None:
             "admin",
         )
         admin_token = invitation_token(admin_invite)
+        assert admin_invite.json()["invited_by"] == {
+            "account_id": str(OWNER_ID),
+            "email": EMAILS[OWNER_ID],
+            "is_active": True,
+        }
         assert accept_invitation(client, ADMIN_ID, admin_token).json()["role"] == "admin"
 
         member_token = invitation_token(
@@ -208,6 +242,51 @@ def test_prepare_complete_organization_lifecycle() -> None:
         assert client.get(
             f"/v1/organizations/{second.json()['id']}", headers=headers(MEMBER_ID)
         ).status_code == 404
+        assert resolve_identities(
+            client,
+            second.json()["id"],
+            MEMBER_ID,
+            [OWNER_ID],
+        ).status_code == 404
+
+        members = client.get(
+            f"/v1/organizations/{organization_id}/members",
+            headers=headers(MEMBER_ID),
+        )
+        assert members.status_code == 200
+        member_identities = {
+            item["account_id"]: item["identity"] for item in members.json()
+        }
+        assert member_identities[str(OWNER_ID)]["email"] == EMAILS[OWNER_ID]
+        assert member_identities[str(ADMIN_ID)]["email"] == EMAILS[ADMIN_ID]
+        assert member_identities[str(MEMBER_ID)]["email"] == EMAILS[MEMBER_ID]
+        assert all(identity["is_active"] for identity in member_identities.values())
+        assert "password" not in json.dumps(members.json()).lower()
+
+        invitation_history = client.get(
+            f"/v1/organizations/{organization_id}/invitations",
+            headers=headers(ADMIN_ID),
+        )
+        assert invitation_history.status_code == 200
+        assert all("invited_by" in item for item in invitation_history.json())
+        serialized_history = json.dumps(invitation_history.json()).lower()
+        assert "accept_url" not in serialized_history
+        assert "token" not in serialized_history
+
+        mixed = resolve_identities(
+            client,
+            organization_id,
+            OWNER_ID,
+            [OWNER_ID, FOREIGN_ID, uuid4()],
+        )
+        assert mixed.status_code == 200
+        assert mixed.json() == [
+            {
+                "account_id": str(OWNER_ID),
+                "email": EMAILS[OWNER_ID],
+                "is_active": True,
+            }
+        ]
 
         new_token = invitation_token(
             create_invitation(client, organization_id, OWNER_ID, NEW_ACCOUNT_ID)
@@ -227,6 +306,28 @@ def test_prepare_complete_organization_lifecycle() -> None:
             headers=headers(ADMIN_ID),
         )
         assert removed.status_code == 204
+        remaining_members = client.get(
+            f"/v1/organizations/{organization_id}/members",
+            headers=headers(OWNER_ID),
+        )
+        assert remaining_members.status_code == 200
+        assert str(MEMBER_ID) not in {
+            item["account_id"] for item in remaining_members.json()
+        }
+        historical_member = resolve_identities(
+            client,
+            organization_id,
+            OWNER_ID,
+            [MEMBER_ID],
+        )
+        assert historical_member.status_code == 200
+        assert historical_member.json() == [
+            {
+                "account_id": str(MEMBER_ID),
+                "email": EMAILS[MEMBER_ID],
+                "is_active": True,
+            }
+        ]
         assert client.get(
             f"/v1/organizations/{organization_id}", headers=headers(MEMBER_ID)
         ).status_code == 404
@@ -298,6 +399,25 @@ def test_verify_persistence_after_postgres_restart() -> None:
         assert roles[str(OWNER_ID)] == "owner"
         assert roles[str(ADMIN_ID)] == "admin"
         assert str(MEMBER_ID) not in roles
+        identities = {
+            item["account_id"]: item["identity"] for item in members.json()
+        }
+        assert identities[str(OWNER_ID)]["email"] == EMAILS[OWNER_ID]
+        assert identities[str(ADMIN_ID)]["email"] == EMAILS[ADMIN_ID]
+        persisted_history = client.post(
+            f"/v1/organizations/{state['organization_id']}"
+            "/identity-summaries/resolve",
+            headers=owner_headers,
+            json={"account_ids": [str(MEMBER_ID), str(FOREIGN_ID)]},
+        )
+        assert persisted_history.status_code == 200
+        assert persisted_history.json() == [
+            {
+                "account_id": str(MEMBER_ID),
+                "email": EMAILS[MEMBER_ID],
+                "is_active": True,
+            }
+        ]
         assert client.get(
             f"/v1/organizations/{state['organization_id']}",
             headers=admin_headers,

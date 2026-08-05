@@ -2,7 +2,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { RequestOptions } from "../api/client";
-import type { M11SectionRevision, M11SectionRevisionPage } from "../api/types";
+import type {
+  M11SectionRevision,
+  M11SectionRevisionPage,
+  OrganizationIdentitySummary,
+} from "../api/types";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import {
   REVISION_HISTORY_FAILURE,
@@ -13,7 +17,10 @@ import {
 const ORGANIZATION_ID = "org-1";
 const CONVERSATION_ID = "conversation-1";
 
-function revision(number: number): M11SectionRevision {
+function revision(
+  number: number,
+  authorAccountId: string | null = "account-1",
+): M11SectionRevision {
   return {
     id: `revision-${number}`,
     section_id: "section-5",
@@ -24,8 +31,16 @@ function revision(number: number): M11SectionRevision {
     instructions: "",
     content: `Revision ${number} content`,
     status: number === 2 ? "done" : "draft",
-    author_account_id: "account-1",
+    author_account_id: authorAccountId,
     created_at: `2026-07-2${number}T12:00:00Z`,
+  };
+}
+
+function identity(accountId: string): OrganizationIdentitySummary {
+  return {
+    account_id: accountId,
+    email: `${accountId}@example.com`,
+    is_active: true,
   };
 }
 
@@ -56,6 +71,9 @@ function Harness({
         {controller.revisions.map((item) => item.revision_number).join(",")}
       </span>
       <span data-testid="error">{controller.error}</span>
+      <span data-testid="identities">
+        {Object.keys(controller.identities).sort().join(",")}
+      </span>
     </div>
   );
 }
@@ -97,6 +115,13 @@ describe("useRevisionHistory", () => {
       options?: RequestOptions,
     ): Promise<T> => {
       paths.push(path);
+      if (path.includes("identity-summaries/resolve")) {
+        expect(options).toEqual({
+          method: "POST",
+          json: { account_ids: ["account-1"] },
+        });
+        return [identity("account-1")] as T;
+      }
       expect(options?.headers).toEqual({ "X-Organization-ID": ORGANIZATION_ID });
       const page: M11SectionRevisionPage = path.includes("after_revision=0")
         ? { items: [revision(1), revision(2)], next_after_revision: 2 }
@@ -111,7 +136,9 @@ describe("useRevisionHistory", () => {
     expect(paths).toEqual([
       "/v1/ai/conversations/conversation-1/m11-sections/5/revisions?after_revision=0&limit=100",
       "/v1/ai/conversations/conversation-1/m11-sections/5/revisions?after_revision=2&limit=100",
+      "/v1/organizations/org-1/identity-summaries/resolve",
     ]);
+    expect(screen.getByTestId("identities")).toHaveTextContent("account-1");
   });
 
   it("supports an empty history", async () => {
@@ -124,7 +151,10 @@ describe("useRevisionHistory", () => {
 
   it("shows a fixed failure and retries", async () => {
     let attempts = 0;
-    const fetcher: AuthorizedFetch = async <T,>(): Promise<T> => {
+    const fetcher: AuthorizedFetch = async <T,>(path: string): Promise<T> => {
+      if (path.includes("identity-summaries/resolve")) {
+        return [identity("account-1")] as T;
+      }
       attempts += 1;
       if (attempts === 1) {
         throw new Error("revision database password");
@@ -152,18 +182,37 @@ describe("useRevisionHistory", () => {
     expect(called).toBe(false);
   });
 
-  it("ignores a slow result after the selected section changes", async () => {
-    let resolveSlow: ((page: M11SectionRevisionPage) => void) | null = null;
-    const slow = new Promise<M11SectionRevisionPage>((resolve) => {
+  it("ignores a slow identity result after the selected section changes", async () => {
+    let resolveSlow: ((items: OrganizationIdentitySummary[]) => void) | null = null;
+    const slow = new Promise<OrganizationIdentitySummary[]>((resolve) => {
       resolveSlow = resolve;
     });
-    const fetcher: AuthorizedFetch = async <T,>(path: string): Promise<T> => {
-      if (path.includes("m11-sections/5/")) {
-        return (await slow) as T;
+    const fetcher: AuthorizedFetch = async <T,>(
+      path: string,
+      options?: RequestOptions,
+    ): Promise<T> => {
+      if (path.includes("identity-summaries/resolve")) {
+        const ids = (options?.json as { account_ids: string[] }).account_ids;
+        if (ids.includes("account-1")) {
+          return (await slow) as T;
+        }
+        return ids.map(identity) as T;
       }
-      return { items: [revision(3)], next_after_revision: null } as T;
+      if (path.includes("m11-sections/5/")) {
+        return { items: [revision(1)], next_after_revision: null } as T;
+      }
+      if (path.includes("m11-sections/6/")) {
+        return {
+          items: [revision(3, "account-2")],
+          next_after_revision: null,
+        } as T;
+      }
+      throw new Error(`Unexpected path: ${path}`);
     };
     const history = renderHistory(fetcher);
+    await waitFor(() =>
+      expect(history.controller().status).toBe("loading"),
+    );
     history.rerender(
       <Harness
         fetcher={fetcher}
@@ -172,12 +221,63 @@ describe("useRevisionHistory", () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId("numbers")).toHaveTextContent("3"));
+    expect(screen.getByTestId("identities")).toHaveTextContent("account-2");
 
     act(() => {
-      resolveSlow?.({ items: [revision(1)], next_after_revision: null });
+      resolveSlow?.([identity("account-1")]);
     });
     await act(async () => Promise.resolve());
     expect(screen.getByTestId("numbers")).toHaveTextContent("3");
+    expect(screen.getByTestId("identities")).toHaveTextContent("account-2");
+    expect(screen.getByTestId("identities")).not.toHaveTextContent("account-1");
+  });
+
+  it("deduplicates authors and resolves them in bounded batches", async () => {
+    const batches: string[][] = [];
+    const records = Array.from({ length: 102 }, (_, index) =>
+      revision(index + 1, `account-${index % 101}`),
+    );
+    const fetcher: AuthorizedFetch = async <T,>(
+      path: string,
+      options?: RequestOptions,
+    ): Promise<T> => {
+      if (path.includes("identity-summaries/resolve")) {
+        const ids = (options?.json as { account_ids: string[] }).account_ids;
+        batches.push(ids);
+        return ids.map(identity) as T;
+      }
+      return { items: records, next_after_revision: null } as T;
+    };
+    const history = renderHistory(fetcher);
+    await waitFor(() => expect(history.controller().status).toBe("ready"));
+    expect(batches.map((batch) => batch.length)).toEqual([100, 1]);
+    expect(new Set(batches.flat()).size).toBe(101);
+    expect(Object.keys(history.controller().identities)).toHaveLength(101);
+  });
+
+  it("treats identity resolver failure as the fixed retryable error", async () => {
+    const fetcher: AuthorizedFetch = async <T,>(path: string): Promise<T> => {
+      if (path.includes("identity-summaries/resolve")) {
+        throw new Error("private identity service detail");
+      }
+      return { items: [revision(1)], next_after_revision: null } as T;
+    };
+    renderHistory(fetcher);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("error"));
+    expect(screen.getByTestId("error")).toHaveTextContent(REVISION_HISTORY_FAILURE);
+    expect(screen.queryByText(/private identity/i)).not.toBeInTheDocument();
+  });
+
+  it("does not resolve null system authors", async () => {
+    const fetcher: AuthorizedFetch = async <T,>(path: string): Promise<T> => {
+      if (path.includes("identity-summaries/resolve")) {
+        throw new Error("Resolver should not be called");
+      }
+      return { items: [revision(1, null)], next_after_revision: null } as T;
+    };
+    renderHistory(fetcher);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
+    expect(screen.getByTestId("identities")).toBeEmptyDOMElement();
   });
 
   it("fails safely when the server repeats a cursor", async () => {

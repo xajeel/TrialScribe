@@ -4,6 +4,7 @@ from uuid import UUID
 
 from trialscribe_user.models.membership import Membership, MembershipRole
 from trialscribe_user.models.organization import Organization
+from trialscribe_user.repositories.identities import IdentityRepository
 from trialscribe_user.repositories.memberships import MembershipRepository
 from trialscribe_user.repositories.organizations import OrganizationRepository
 from trialscribe_user.services.authorization import (
@@ -25,9 +26,11 @@ class OrganizationService:
         self,
         organizations: OrganizationRepository,
         memberships: MembershipRepository,
+        identities: IdentityRepository | None = None,
     ) -> None:
         self._organizations = organizations
         self._memberships = memberships
+        self._identities = identities
         self._authorization = AuthorizationService(memberships)
 
     async def create_organization(
@@ -48,6 +51,8 @@ class OrganizationService:
                 role=MembershipRole.OWNER.value,
             )
         )
+        if self._identities is not None:
+            await self._identities.associate(organization.id, account_id)
         return organization, membership
 
     async def list_organizations(

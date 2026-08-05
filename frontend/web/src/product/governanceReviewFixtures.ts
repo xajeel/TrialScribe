@@ -4,6 +4,7 @@ import type {
   M11Section,
   M11SectionRevision,
   M11SectionStatus,
+  OrganizationIdentitySummary,
 } from "../api/types";
 import {
   ATTENTION_DOCUMENTS,
@@ -143,6 +144,7 @@ export function revisionViewFromApi(
   revision: M11SectionRevision,
   currentRevision: number,
   accountId: string | null,
+  identities: Readonly<Record<string, OrganizationIdentitySummary>>,
 ): RevisionRowView {
   const action =
     revision.action === "done"
@@ -155,7 +157,8 @@ export function revisionViewFromApi(
       ? "System"
       : revision.author_account_id === accountId
         ? "You"
-        : "Collaborator";
+        : (identities[revision.author_account_id]?.email ??
+          "Unavailable account");
   const summaries: Record<RevisionDisplayAction, string> = {
     edited: "Section wording updated",
     generated: "Generated section snapshot",

@@ -106,6 +106,14 @@ class FakeInvitationRepository:
         self.flushes += 1
 
 
+class FakeIdentityRepository:
+    def __init__(self) -> None:
+        self.associations: set[tuple[UUID, UUID]] = set()
+
+    async def associate(self, organization_id: UUID, account_id: UUID) -> None:
+        self.associations.add((organization_id, account_id))
+
+
 def settings() -> UserSettings:
     public_key = Ed25519PrivateKey.generate().public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -131,15 +139,22 @@ def membership(account_id: UUID, role: MembershipRole) -> Membership:
 
 def service_with(
     memberships: list[Membership],
-) -> tuple[InvitationService, FakeInvitationRepository, FakeMembershipRepository]:
+) -> tuple[
+    InvitationService,
+    FakeInvitationRepository,
+    FakeMembershipRepository,
+    FakeIdentityRepository,
+]:
     invitations = FakeInvitationRepository()
     membership_repository = FakeMembershipRepository(memberships)
+    identity_repository = FakeIdentityRepository()
     service = InvitationService(  # type: ignore[arg-type]
         invitations,
         membership_repository,
         settings(),
+        identity_repository,
     )
-    return service, invitations, membership_repository
+    return service, invitations, membership_repository, identity_repository
 
 
 def create_invite(
@@ -162,7 +177,7 @@ def create_invite(
 
 
 def test_owner_creates_hash_only_normalized_single_use_link() -> None:
-    service, invitations, _ = service_with(
+    service, invitations, _, _ = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER)]
     )
 
@@ -177,7 +192,7 @@ def test_owner_creates_hash_only_normalized_single_use_link() -> None:
 
 
 def test_admin_can_invite_members_but_not_admins() -> None:
-    service, _, _ = service_with([membership(ADMIN_ID, MembershipRole.ADMIN)])
+    service, _, _, _ = service_with([membership(ADMIN_ID, MembershipRole.ADMIN)])
 
     create_invite(service, actor_id=ADMIN_ID)
     with pytest.raises(PermissionDeniedError):
@@ -191,7 +206,7 @@ def test_admin_can_invite_members_but_not_admins() -> None:
 
 @pytest.mark.parametrize("role", [MembershipRole.OWNER, "unknown"])
 def test_invalid_invitation_roles_are_rejected(role: str | MembershipRole) -> None:
-    service, _, _ = service_with([membership(OWNER_ID, MembershipRole.OWNER)])
+    service, _, _, _ = service_with([membership(OWNER_ID, MembershipRole.OWNER)])
 
     with pytest.raises(InvalidInvitationInput):
         asyncio.run(
@@ -206,7 +221,7 @@ def test_invalid_invitation_roles_are_rejected(role: str | MembershipRole) -> No
 
 
 def test_live_duplicate_conflicts_and_expired_invite_is_reissued() -> None:
-    service, invitations, _ = service_with(
+    service, invitations, _, _ = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER)]
     )
     first, _, _ = create_invite(service)
@@ -221,7 +236,7 @@ def test_live_duplicate_conflicts_and_expired_invite_is_reissued() -> None:
 
 
 def test_existing_member_is_rejected_before_an_invitation_is_created() -> None:
-    service, invitations, _ = service_with(
+    service, invitations, _, _ = service_with(
         [
             membership(OWNER_ID, MembershipRole.OWNER),
             membership(MEMBER_ID, MembershipRole.MEMBER),
@@ -236,7 +251,7 @@ def test_existing_member_is_rejected_before_an_invitation_is_created() -> None:
 
 
 def test_acceptance_creates_exact_role_and_replay_is_rejected() -> None:
-    service, invitations, memberships = service_with(
+    service, invitations, memberships, identities = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER)]
     )
     invitation, _, token = create_invite(service, role=MembershipRole.ADMIN)
@@ -247,6 +262,7 @@ def test_acceptance_creates_exact_role_and_replay_is_rejected() -> None:
     assert accepted.role == MembershipRole.ADMIN.value
     assert invitation.accepted_at == NOW
     assert accepted in memberships.memberships
+    assert identities.associations == {(ORGANIZATION_ID, NEW_ACCOUNT_ID)}
     with pytest.raises(InvalidInvitationError, match="Invalid organization invitation"):
         asyncio.run(service.accept_invitation(token, MEMBER_ID, NOW))
     with pytest.raises(InvalidInvitationError, match="Invalid organization invitation"):
@@ -254,7 +270,7 @@ def test_acceptance_creates_exact_role_and_replay_is_rejected() -> None:
 
 
 def test_forwarded_token_cannot_be_accepted_by_another_account() -> None:
-    service, invitations, memberships = service_with(
+    service, invitations, memberships, identities = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER)]
     )
     invitation, _, token = create_invite(service)
@@ -267,10 +283,11 @@ def test_forwarded_token_cannot_be_accepted_by_another_account() -> None:
     assert all(item.account_id != MEMBER_ID for item in memberships.memberships)
     accepted = asyncio.run(service.accept_invitation(token, NEW_ACCOUNT_ID, NOW))
     assert accepted.account_id == NEW_ACCOUNT_ID
+    assert identities.associations == {(ORGANIZATION_ID, NEW_ACCOUNT_ID)}
 
 
 def test_expired_and_revoked_invitations_share_safe_rejection() -> None:
-    service, _, _ = service_with([membership(OWNER_ID, MembershipRole.OWNER)])
+    service, _, _, _ = service_with([membership(OWNER_ID, MembershipRole.OWNER)])
     expired, _, expired_token = create_invite(service)
     with pytest.raises(InvalidInvitationError, match="Invalid organization invitation"):
         asyncio.run(
@@ -302,7 +319,7 @@ def test_expired_and_revoked_invitations_share_safe_rejection() -> None:
 
 def test_existing_membership_race_never_changes_access() -> None:
     existing = membership(NEW_ACCOUNT_ID, MembershipRole.MEMBER)
-    service, invitations, memberships = service_with(
+    service, invitations, memberships, _ = service_with(
         [membership(OWNER_ID, MembershipRole.OWNER), existing]
     )
     invitation, _, token = create_invite(service)

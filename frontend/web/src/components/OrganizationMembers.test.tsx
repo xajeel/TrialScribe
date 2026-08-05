@@ -50,8 +50,14 @@ describe("OrganizationMembers", () => {
     renderMembers("owner", { onChangeRole, onRemoveMember });
 
     expect(screen.getByText("3 members")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("omar.shah@northstar-cr.org").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("elena.garcia@northstar-cr.org")).toBeInTheDocument();
+    expect(screen.getByText("Inactive")).toBeInTheDocument();
+    expect(screen.queryByText(/acc-omar/)).not.toBeInTheDocument();
     const roleSelect = screen.getByRole("combobox", {
-      name: /role for member acc-omar/i,
+      name: /role for omar.shah@northstar-cr.org/i,
     });
     await user.selectOptions(roleSelect, "member");
     await user.click(screen.getAllByRole("button", { name: "Update role" })[0]);
@@ -112,6 +118,7 @@ describe("OrganizationMembers", () => {
     expect(screen.queryByText("accepted@example.com")).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Invited by" }))
       .toBeInTheDocument();
+    expect(screen.getAllByText("You").length).toBeGreaterThan(0);
   });
 
   it("renders retryable load errors without private details", async () => {

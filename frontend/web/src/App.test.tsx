@@ -372,6 +372,11 @@ describe("App", () => {
               account_id: account.id,
               role: "owner",
               created_at: "2026-07-29T10:00:00Z",
+              identity: {
+                account_id: account.id,
+                email: account.email,
+                is_active: true,
+              },
             },
           ]);
         }

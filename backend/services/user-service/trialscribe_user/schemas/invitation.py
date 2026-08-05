@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trialscribe_user.schemas.identity import OrganizationIdentitySummary
+
 InvitationRole = Literal["admin", "member"]
 
 
@@ -28,6 +30,7 @@ class InvitationResponse(BaseModel):
     email: str
     role: InvitationRole
     invited_by_account_id: UUID
+    invited_by: OrganizationIdentitySummary
     expires_at: datetime
     accepted_at: datetime | None
     revoked_at: datetime | None
