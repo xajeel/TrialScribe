@@ -25,6 +25,7 @@ from trialscribe_user.services.authorization import (
 )
 from trialscribe_user.services.invitations import InvitationConflictError
 from trialscribe_user.services.organizations import MembershipConflictError
+from trialscribe_user.utils.constant import MAX_IDENTITY_RESOLUTION_SIZE
 
 NOW = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000041")
@@ -171,6 +172,13 @@ class FakeIdentityRepository:
         account_ids: list[UUID],
     ) -> dict[UUID, OrganizationIdentity]:
         return {item: IDENTITIES[item] for item in account_ids if item in IDENTITIES}
+
+    async def resolve_many(
+        self,
+        organization_id: UUID,
+        account_ids: list[UUID],
+    ) -> dict[UUID, OrganizationIdentity]:
+        return await self.resolve(organization_id, account_ids)
 
 
 class FakeDirectoryService:
@@ -363,3 +371,100 @@ def test_identity_resolution_is_bounded_and_omits_unknown_accounts(
     assert oversized.status_code == 422
     assert foreign.status_code == 404
     assert foreign.json() == {"detail": "Organization not found"}
+
+
+def test_large_member_and_invitation_lists_batch_internal_identity_lookups(
+    api_context: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    organization_service = api_context["organization"]
+    invitation_service = api_context["invitation"]
+    account_ids = [UUID(int=value) for value in range(1000, 1101)]
+    memberships = [
+        organization_service.membership(account_id, MembershipRole.MEMBER)
+        for account_id in account_ids
+    ]
+    invitations = [
+        Invitation(
+            id=uuid4(),
+            organization_id=ORGANIZATION_ID,
+            email=f"member-{index}@example.com",
+            role=MembershipRole.MEMBER.value,
+            invited_by_account_id=account_id,
+            token_hash=f"{index:064x}",
+            expires_at=NOW,
+            accepted_at=None,
+            revoked_at=None,
+            created_at=NOW,
+        )
+        for index, account_id in enumerate(account_ids)
+    ]
+    batch_sizes: list[int] = []
+
+    async def list_members(*_args: object) -> list[Membership]:
+        return memberships
+
+    async def list_invitations(*_args: object) -> list[Invitation]:
+        return invitations
+
+    class BoundedIdentityRepository:
+        async def resolve(
+            self,
+            _organization_id: UUID,
+            requested_ids: list[UUID],
+        ) -> dict[UUID, OrganizationIdentity]:
+            unique_ids = tuple(dict.fromkeys(requested_ids))
+            if len(unique_ids) > MAX_IDENTITY_RESOLUTION_SIZE:
+                raise ValueError("identity resolution exceeds bounded size")
+            batch_sizes.append(len(unique_ids))
+            return {
+                account_id: OrganizationIdentity(
+                    account_id=account_id,
+                    email=f"{account_id}@example.com",
+                    is_active=True,
+                )
+                for account_id in unique_ids
+            }
+
+        async def resolve_many(
+            self,
+            organization_id: UUID,
+            requested_ids: list[UUID],
+        ) -> dict[UUID, OrganizationIdentity]:
+            identities: dict[UUID, OrganizationIdentity] = {}
+            unique_ids = tuple(dict.fromkeys(requested_ids))
+            for offset in range(0, len(unique_ids), MAX_IDENTITY_RESOLUTION_SIZE):
+                identities.update(
+                    await self.resolve(
+                        organization_id,
+                        list(
+                            unique_ids[
+                                offset : offset + MAX_IDENTITY_RESOLUTION_SIZE
+                            ]
+                        ),
+                    )
+                )
+            return identities
+
+    monkeypatch.setattr(organization_service, "list_members", list_members)
+    monkeypatch.setattr(invitation_service, "list_invitations", list_invitations)
+    monkeypatch.setattr(
+        routes,
+        "IdentityRepository",
+        lambda *_args: BoundedIdentityRepository(),
+    )
+
+    members_response = api_context["client"].get(
+        f"/v1/organizations/{ORGANIZATION_ID}/members"
+    )
+    invitations_response = api_context["client"].get(
+        f"/v1/organizations/{ORGANIZATION_ID}/invitations"
+    )
+
+    assert (
+        members_response.status_code,
+        invitations_response.status_code,
+    ) == (200, 200)
+    assert batch_sizes == [100, 1, 100, 1]
+    assert len(members_response.json()) == 101
+    assert len(invitations_response.json()) == 101

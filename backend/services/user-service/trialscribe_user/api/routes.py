@@ -222,7 +222,7 @@ async def list_members(
                 MembershipRepository(session),
             ).list_members(account_id, organization_id)
             identity_repository = IdentityRepository(session)
-            identities = await identity_repository.resolve(
+            identities = await identity_repository.resolve_many(
                 organization_id,
                 [item.account_id for item in memberships],
             )
@@ -331,7 +331,7 @@ async def list_invitations(
                 MembershipRepository(session),
                 settings,
             ).list_invitations(account_id, organization_id)
-            identities = await IdentityRepository(session).resolve(
+            identities = await IdentityRepository(session).resolve_many(
                 organization_id,
                 [item.invited_by_account_id for item in invitations],
             )

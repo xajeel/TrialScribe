@@ -26,7 +26,7 @@ class FakeSession:
         self.added: list[OrganizationIdentityLink] = []
         self.flushes = 0
         self.rows: list[dict[str, Any]] = []
-        self.parameters: dict[str, Any] | None = None
+        self.parameters: list[dict[str, Any]] = []
 
     async def scalar(self, _statement: object) -> UUID | None:
         return self.existing
@@ -42,7 +42,7 @@ class FakeSession:
         _statement: object,
         parameters: dict[str, Any],
     ) -> FakeMappingResult:
-        self.parameters = parameters
+        self.parameters.append(parameters)
         return FakeMappingResult(self.rows)
 
 
@@ -83,10 +83,12 @@ def test_bulk_resolution_deduplicates_and_returns_allow_listed_fields() -> None:
 
     assert identities[ACCOUNT_ID].email == "member@example.com"
     assert identities[ACCOUNT_ID].is_active is True
-    assert session.parameters == {
-        "organization_id": ORGANIZATION_ID,
-        "account_ids": (ACCOUNT_ID, SECOND_ACCOUNT_ID),
-    }
+    assert session.parameters == [
+        {
+            "organization_id": ORGANIZATION_ID,
+            "account_ids": (ACCOUNT_ID, SECOND_ACCOUNT_ID),
+        }
+    ]
 
 
 def test_bulk_resolution_is_bounded_and_empty_lookup_skips_database() -> None:
@@ -94,7 +96,7 @@ def test_bulk_resolution_is_bounded_and_empty_lookup_skips_database() -> None:
     repository = IdentityRepository(session)  # type: ignore[arg-type]
 
     assert asyncio.run(repository.resolve(ORGANIZATION_ID, [])) == {}
-    assert session.parameters is None
+    assert session.parameters == []
     with pytest.raises(ValueError, match="bounded size"):
         asyncio.run(
             repository.resolve(
@@ -102,3 +104,32 @@ def test_bulk_resolution_is_bounded_and_empty_lookup_skips_database() -> None:
                 [UUID(int=value) for value in range(101)],
             )
         )
+
+
+def test_internal_resolution_batches_above_public_limit() -> None:
+    session = FakeSession()
+    repository = IdentityRepository(session)  # type: ignore[arg-type]
+    account_ids = [UUID(int=value) for value in range(101)]
+
+    assert asyncio.run(repository.resolve_many(ORGANIZATION_ID, [])) == {}
+    assert asyncio.run(
+        repository.resolve_many(ORGANIZATION_ID, account_ids[:100])
+    ) == {}
+    assert [len(parameters["account_ids"]) for parameters in session.parameters] == [
+        100
+    ]
+
+    session.parameters.clear()
+    assert asyncio.run(
+        repository.resolve_many(
+            ORGANIZATION_ID,
+            [*account_ids, account_ids[0]],
+        )
+    ) == {}
+
+    assert [len(parameters["account_ids"]) for parameters in session.parameters] == [
+        100,
+        1,
+    ]
+    assert session.parameters[0]["account_ids"] == tuple(account_ids[:100])
+    assert session.parameters[1]["account_ids"] == (account_ids[100],)

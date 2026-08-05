@@ -77,3 +77,21 @@ class IdentityRepository:
             )
             for row in rows
         }
+
+    async def resolve_many(
+        self,
+        organization_id: UUID,
+        account_ids: list[UUID] | tuple[UUID, ...] | set[UUID],
+    ) -> dict[UUID, OrganizationIdentity]:
+        """Resolve an internal collection through bounded database batches."""
+
+        unique_ids = tuple(dict.fromkeys(account_ids))
+        identities: dict[UUID, OrganizationIdentity] = {}
+        for offset in range(0, len(unique_ids), MAX_IDENTITY_RESOLUTION_SIZE):
+            identities.update(
+                await self.resolve(
+                    organization_id,
+                    unique_ids[offset : offset + MAX_IDENTITY_RESOLUTION_SIZE],
+                )
+            )
+        return identities
