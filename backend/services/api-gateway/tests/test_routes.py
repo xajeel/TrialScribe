@@ -194,7 +194,7 @@ def test_user_routes_preserve_paths_and_context(
     ("path", "target", "upstream"),
     [
         ("/v1/ai/sessions/one", "ai", "/sessions/one"),
-        ("/v1/jobs/job-one", "worker", "/job-one"),
+        ("/v1/jobs/job-one", "worker", "/jobs/job-one"),
     ],
 )
 def test_capability_routes_verify_membership_and_strip_prefix(

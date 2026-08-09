@@ -38,13 +38,33 @@ class EventPublisher:
     async def publish(self, envelope: EventEnvelope) -> None:
         """Send one envelope, keyed so its subject's events stay in order."""
 
-        topic = self._registry.topic_of(self._settings.topic_prefix, envelope)
+        await self.publish_raw(
+            self._registry.topic_of(self._settings.topic_prefix, envelope),
+            envelope.to_bytes(),
+            key=envelope.partition_key(),
+            headers=envelope.headers(),
+        )
+
+    async def publish_raw(
+        self,
+        topic: str,
+        value: bytes,
+        key: bytes | None = None,
+        headers: list[tuple[str, bytes]] | None = None,
+    ) -> None:
+        """Send bytes that were serialized earlier, exactly as they were stored.
+
+        The outbox records the bytes it intends to send, so delivery replays them
+        rather than re-serializing — what the broker receives can never drift
+        from what the writer committed.
+        """
+
         try:
             await self._producer.send_and_wait(
                 topic,
-                value=envelope.to_bytes(),
-                key=envelope.partition_key(),
-                headers=envelope.headers(),
+                value=value,
+                key=key,
+                headers=headers or [],
             )
         except Exception:
             raise EventPublishError(PUBLISH_FAILURE_MESSAGE) from None
