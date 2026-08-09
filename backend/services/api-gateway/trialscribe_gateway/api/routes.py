@@ -261,6 +261,38 @@ async def proxy_ai(
 
 
 @router.api_route(
+    "/v1/jobs",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+)
+async def proxy_jobs_root(
+    request: Request,
+    organization_header: Annotated[
+        str | None,
+        Header(alias=ORGANIZATION_ID_HEADER),
+    ] = None,
+    token: Annotated[str | None, Depends(get_optional_bearer_token)] = None,
+    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)] = None,
+    now: Annotated[datetime, Depends(get_now)] = None,
+    access: Annotated[
+        OrganizationAccessService,
+        Depends(get_organization_access_service),
+    ] = None,
+    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)] = None,
+) -> Response:
+    return await _proxy_organization_capability(
+        request,
+        ProxyTarget.WORKER,
+        "/jobs",
+        organization_header,
+        token,
+        verifier,
+        now,
+        access,
+        proxy,
+    )
+
+
+@router.api_route(
     "/v1/jobs/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
@@ -283,7 +315,7 @@ async def proxy_jobs(
     return await _proxy_organization_capability(
         request,
         ProxyTarget.WORKER,
-        f"/{path}",
+        f"/jobs/{path}",
         organization_header,
         token,
         verifier,

@@ -126,7 +126,7 @@ def assembled_client(
             "/v1/organization-invitations/accept",
         ),
         ("PUT", "/v1/ai/sessions/session-one", "ai.internal", "/sessions/session-one"),
-        ("DELETE", "/v1/jobs/job-one", "worker.internal", "/job-one"),
+        ("DELETE", "/v1/jobs/job-one", "worker.internal", "/jobs/job-one"),
     ],
 )
 def test_each_public_prefix_preserves_the_proxy_contract(

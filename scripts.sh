@@ -10,7 +10,7 @@ Usage: ./scripts.sh <command>
 Commands:
   install  Install frozen backend and React dependencies
   env      Create .env from .env_example when it does not exist
-  run      Run one service: gateway, auth, user, ai, worker, or web
+  run      Run one service: gateway, auth, user, ai, worker, jobs, or web
   lint     Run Ruff checks and the React TypeScript check
   test     Run every backend service test and the React test suite
   smoke    Start and health-check every platform boundary
@@ -20,6 +20,7 @@ Commands:
   user     Manage organization RBAC: test
   ai       Manage AI Engine conversation workspaces: test
   events   Manage the Kafka event backbone: test
+  jobs     Manage the background job runtime: test
   help     Show this help
 
 Compatibility aliases:
@@ -51,6 +52,11 @@ ensure_env() {
     EVENTS_CONSUMER_GROUP
     EVENTS_MAX_DELIVERY_ATTEMPTS
     EVENTS_RETRY_BACKOFF_SECONDS
+    WORKER_CONSUMER_GROUP
+    WORKER_PROGRESS_TTL_SECONDS
+    WORKER_PROGRESS_PERSIST_STEP
+    WORKER_SUPERVISOR_RESTART_SECONDS
+    WORKER_SUPERVISOR_RESTART_CAP_SECONDS
     GATEWAY_AUTH_SERVICE_URL
     GATEWAY_USER_SERVICE_URL
     GATEWAY_AI_SERVICE_URL
@@ -213,6 +219,48 @@ run_event_backbone() {
       ;;
     *)
       echo "Unknown events action: ${action:-<missing>}" >&2
+      echo "Choose: test" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_background_jobs() {
+  local action="${1:-}"
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-jobs-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/background-jobs.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    test)
+      (
+        cd "$repo_root"
+        cleanup_jobs_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_jobs_test EXIT
+        cleanup_jobs_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-worker \
+            python "$repo_root/scripts/check_background_jobs.py" \
+              --project-name trialscribe-jobs-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/background-jobs.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown jobs action: ${action:-<missing>}" >&2
       echo "Choose: test" >&2
       return 1
       ;;
@@ -449,14 +497,19 @@ run_service() {
       (cd "$repo_root/backend" && uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --host 0.0.0.0 --port "${AI_PORT:-8003}")
       ;;
     worker)
-      (cd "$repo_root/backend" && uv run --package trialscribe-worker uvicorn trialscribe_worker.api.app:app --host 0.0.0.0 --port "${WORKER_PORT:-8004}")
+      ensure_env
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-worker uvicorn trialscribe_worker.api.app:app --host 0.0.0.0 --port "${WORKER_PORT:-8004}")
+      ;;
+    jobs)
+      ensure_env
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-worker python -m trialscribe_worker.runtime.main)
       ;;
     web)
       (cd "$repo_root/frontend/web" && npm run dev -- --host 0.0.0.0 --port "${WEB_PORT:-5173}")
       ;;
     *)
       echo "Unknown service: ${1:-<missing>}" >&2
-      echo "Choose one of: gateway, auth, user, ai, worker, web" >&2
+      echo "Choose one of: gateway, auth, user, ai, worker, jobs, web" >&2
       return 1
       ;;
   esac
@@ -527,6 +580,9 @@ case "${1:-}" in
     ;;
   events)
     run_event_backbone "${2:-}"
+    ;;
+  jobs)
+    run_background_jobs "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)

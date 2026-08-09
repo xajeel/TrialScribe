@@ -4079,10 +4079,20 @@ version = "0.1.0"
 source = { editable = "services/worker-service" }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
+    { name = "pydantic-settings" },
+    { name = "redis" },
+    { name = "trialscribe-database" },
+    { name = "trialscribe-events" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" }]
+requires-dist = [
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.14,<0.116" },
+    { name = "pydantic-settings", specifier = "==2.14.2" },
+    { name = "redis", specifier = "==8.0.1" },
+    { name = "trialscribe-database", editable = "packages/database" },
+    { name = "trialscribe-events", editable = "packages/events" },
+]
 
 [[package]]
 name = "typer"
