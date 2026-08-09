@@ -380,3 +380,103 @@ def test_the_pipeline_contract_raises_the_cancellation_the_runner_expects() -> N
     run(runner, job, store)
 
     assert job.status == JobStatus.CANCELLED.value
+
+
+class UnreachableCleanupStore(FakeKeyValueStore):
+    """A store that answers reads and writes but cannot be tidied up."""
+
+    async def delete(self, *names: str) -> Any:
+        raise ConnectionError("redis unavailable do-not-print")
+
+
+def build_runner_with_broken_cleanup(
+    store: FakeJobStore,
+    pipelines: dict[JobKind, Any] | None = None,
+) -> JobRunner:
+    return JobRunner(
+        FakeRuntime(store),  # type: ignore[arg-type]
+        JobProgressStore(UnreachableCleanupStore(), 3600),
+        WorkerSettings(progress_persist_step=10),
+        EventBusSettings(
+            bootstrap_servers="localhost:9092",
+            max_delivery_attempts=MAX_ATTEMPTS,
+        ),
+        pipelines if pipelines is not None else {JobKind.PROBE: probe_pipeline},
+    )
+
+
+def test_a_cleanup_failure_cannot_undo_a_job_that_succeeded() -> None:
+    """The answer is already true; tidying up afterwards may not retract it.
+
+    Anything raised after the terminal write escapes into the event consumer's
+    transaction, which would roll the outcome back together with the receipt and
+    leave the job to be rerun and dead-lettered (bug B28).
+    """
+
+    store = FakeJobStore()
+    job = store.seed(
+        parameters={PROBE_STEPS_PARAMETER: 3, PROBE_STEP_SECONDS_PARAMETER: 0}
+    )
+    runner = build_runner_with_broken_cleanup(store)
+
+    run(runner, job, store)
+
+    assert job.status == JobStatus.SUCCEEDED.value
+    assert job.progress == 100
+    assert store.finishes == [(job.id, "succeeded")]
+
+
+def test_a_cleanup_failure_cannot_undo_a_cancelled_job() -> None:
+    store = FakeJobStore()
+    job = store.seed(
+        parameters={PROBE_STEPS_PARAMETER: 20, PROBE_STEP_SECONDS_PARAMETER: 0},
+        cancel_requested_at=datetime(2026, 8, 9, 13, 0, tzinfo=UTC),
+    )
+    runner = build_runner_with_broken_cleanup(store)
+
+    run(runner, job, store)
+
+    assert job.status == JobStatus.CANCELLED.value
+    assert store.finishes == [(job.id, "cancelled")]
+
+
+def test_a_cleanup_failure_cannot_undo_a_failed_job() -> None:
+    store = FakeJobStore()
+    job = store.seed(
+        parameters={PROBE_FAIL_ATTEMPTS_PARAMETER: MAX_ATTEMPTS},
+        attempt=MAX_ATTEMPTS - 1,
+    )
+    runner = build_runner_with_broken_cleanup(store)
+
+    run(runner, job, store)
+
+    assert job.status == JobStatus.FAILED.value
+    assert store.finishes == [(job.id, "failed")]
+
+
+def test_a_cleanup_failure_runs_the_pipeline_exactly_once() -> None:
+    store = FakeJobStore()
+    attempts: list[int] = []
+
+    async def counting_pipeline(context: JobContext) -> None:
+        attempts.append(context.attempt)
+        await context.report(100)
+
+    job = store.seed()
+    runner = build_runner_with_broken_cleanup(store, {JobKind.PROBE: counting_pipeline})
+
+    run(runner, job, store)
+
+    assert attempts == [1]
+    assert job.status == JobStatus.SUCCEEDED.value
+
+
+def test_an_unsupported_kind_survives_a_cleanup_failure_too() -> None:
+    store = FakeJobStore()
+    job = store.seed(kind="section-generation")
+    runner = build_runner_with_broken_cleanup(store)
+
+    run(runner, job, store)
+
+    assert job.status == JobStatus.FAILED.value
+    assert job.error_code == JobErrorCode.UNSUPPORTED_KIND.value

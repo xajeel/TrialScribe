@@ -15,7 +15,9 @@ from trialscribe_events.config import EventBusSettings
 from trialscribe_events.consumer import EventConsumer
 from trialscribe_events.contracts.job import register_job_events
 from trialscribe_events.publisher import EventPublisher, create_event_publisher
+from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.registry import EventRegistry
+from trialscribe_events.repositories.outbox import OutboxRepository
 from trialscribe_events.topics import ensure_topics
 from trialscribe_events.utils.constant import (
     JOB_EVENT_VERSION,
@@ -125,6 +127,7 @@ class Backbone:
         )
         self.progress = JobProgressStore(self.redis, 3600)
         self.publisher = create_event_publisher(self.settings, self.registry)
+        self.relay = OutboxRelay(self.runtime, self.publisher, 100, 0.05)
         await ensure_topics(
             self.settings,
             list(self.registry.topics(self.settings.topic_prefix)),
@@ -162,15 +165,18 @@ class Backbone:
         await self.redis.aclose()
         await self.runtime.dispose()
 
-    async def request(self, tenant: Tenant, **parameters: Any) -> UUID:
+    def _service(self, session: Any) -> JobService:
+        return JobService(
+            JobRepository(session),
+            self.progress,
+            OutboxRepository(session),
+            self.registry,
+            self.settings.topic_prefix,
+        )
+
+    async def request(self, tenant: Tenant, *, hand_over: bool = True, **parameters: Any) -> UUID:
         async with self.runtime.transaction() as session:
-            service = JobService(
-                JobRepository(session),
-                self.progress,
-                self.publisher,
-                self.registry,
-            )
-            response = await service.request_job(
+            response = await self._service(session).request_job(
                 tenant.organization_id,
                 tenant.account_id,
                 JobCreateRequest(
@@ -180,6 +186,8 @@ class Backbone:
                 ),
                 datetime.now(UTC),
             )
+        if hand_over:
+            await self.relay.drain_once()
         return response.id
 
     async def records(self, expected: int, timeout: float) -> list[Any]:
@@ -353,13 +361,11 @@ async def a_running_job_stops_when_asked(
     handling = asyncio.create_task(backbone.consumer.process(records[0]))
     await asyncio.sleep(0.3)
     async with backbone.runtime.transaction() as session:
-        service = JobService(
-            JobRepository(session),
-            backbone.progress,
-            backbone.publisher,
-            backbone.registry,
+        await backbone._service(session).cancel_job(
+            tenant.organization_id,
+            job_id,
+            datetime.now(UTC),
         )
-        await service.cancel_job(tenant.organization_id, job_id, datetime.now(UTC))
     await handling
 
     return await backbone.job_row(job_id)
@@ -410,13 +416,11 @@ async def a_request_for_a_cancelled_job_changes_nothing(
 ) -> dict[str, Any]:
     job_id = await backbone.request(tenant, steps=2, step_seconds=0)
     async with backbone.runtime.transaction() as session:
-        service = JobService(
-            JobRepository(session),
-            backbone.progress,
-            backbone.publisher,
-            backbone.registry,
+        await backbone._service(session).cancel_job(
+            tenant.organization_id,
+            job_id,
+            datetime.now(UTC),
         )
-        await service.cancel_job(tenant.organization_id, job_id, datetime.now(UTC))
 
     await backbone.drain(1, CONSUME_TIMEOUT_SECONDS)
     return await backbone.job_row(job_id)
@@ -449,24 +453,24 @@ async def progress_is_sampled_while_the_job_actually_runs(
     samples: list[int] = []
     while not handling.done():
         async with backbone.runtime.transaction() as session:
-            service = JobService(
-                JobRepository(session),
-                backbone.progress,
-                backbone.publisher,
-                backbone.registry,
+            samples.append(
+                (
+                    await backbone._service(session).get_job(
+                        tenant.organization_id, job_id
+                    )
+                ).progress
             )
-            samples.append((await service.get_job(tenant.organization_id, job_id)).progress)
         await asyncio.sleep(0.02)
     await handling
 
     async with backbone.runtime.transaction() as session:
-        service = JobService(
-            JobRepository(session),
-            backbone.progress,
-            backbone.publisher,
-            backbone.registry,
+        samples.append(
+            (
+                await backbone._service(session).get_job(
+                    tenant.organization_id, job_id
+                )
+            ).progress
         )
-        samples.append((await service.get_job(tenant.organization_id, job_id)).progress)
     return samples
 
 
@@ -477,3 +481,72 @@ def test_progress_reported_to_a_caller_never_goes_backwards() -> None:
     assert samples[0] == 0
     assert samples[-1] == 100
     assert max(samples[:-1]) > 0
+
+
+async def a_ticket_is_durable_before_its_event_can_be_seen(
+    backbone: Backbone,
+    tenant: Tenant,
+) -> tuple[str, int, int, dict[str, Any]]:
+    """Prove the queue message cannot outrun the ticket that justifies it.
+
+    Publishing from the request let a worker be handed a job whose row had not
+    committed, give up after its retries, and discard the record — leaving a
+    ticket accepted but unrunnable (bug B29). Storing the message beside the
+    ticket makes that ordering impossible: nothing is on the topic until the
+    relay sweeps, and by then the ticket is committed.
+    """
+
+    job_id = await backbone.request(tenant, hand_over=False, steps=2, step_seconds=0)
+
+    status_before = (await backbone.job_row(job_id))["status"]
+    on_topic_before = len(await backbone.records(1, 2.0))
+
+    published = (await backbone.relay.drain_once()).published
+    settled = await backbone.drain(1, CONSUME_TIMEOUT_SECONDS)
+
+    return status_before, on_topic_before, published + settled, await backbone.job_row(job_id)
+
+
+def test_no_event_exists_until_its_ticket_is_committed() -> None:
+    status_before, on_topic_before, moved, row = asyncio.run(
+        with_backbone(a_ticket_is_durable_before_its_event_can_be_seen)
+    )
+
+    assert status_before == JobStatus.QUEUED.value
+    assert on_topic_before == 0
+    assert moved == 2
+    assert row["status"] == JobStatus.SUCCEEDED.value
+    assert row["attempt"] == 1
+
+
+async def an_undelivered_event_is_kept_until_the_broker_takes_it(
+    backbone: Backbone,
+    tenant: Tenant,
+) -> tuple[int, int, dict[str, Any]]:
+    """A relay that cannot reach the broker must not lose the job."""
+
+    job_id = await backbone.request(tenant, hand_over=False, steps=2, step_seconds=0)
+
+    broken = OutboxRelay(backbone.runtime, _RefusingPublisher(), 100, 0.05)
+    first = (await broken.drain_once()).failed
+    second = (await backbone.relay.drain_once()).published
+    await backbone.drain(1, CONSUME_TIMEOUT_SECONDS)
+
+    return first, second, await backbone.job_row(job_id)
+
+
+class _RefusingPublisher:
+    """A broker that is simply not there."""
+
+    async def publish_raw(self, *arguments: Any, **keywords: Any) -> None:
+        raise ConnectionError("broker unreachable do-not-print")
+
+
+def test_a_broker_outage_delays_a_job_rather_than_losing_it() -> None:
+    failed, published, row = asyncio.run(
+        with_backbone(an_undelivered_event_is_kept_until_the_broker_takes_it)
+    )
+
+    assert failed == 1
+    assert published == 1
+    assert row["status"] == JobStatus.SUCCEEDED.value

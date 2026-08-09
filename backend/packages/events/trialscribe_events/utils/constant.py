@@ -25,3 +25,6 @@ UNKNOWN_EVENT_TYPE_MESSAGE = "event type is not registered"
 CONTRACT_MISMATCH_MESSAGE = "event payload does not match its contract"
 DUPLICATE_REGISTRATION_MESSAGE = "event type and version is already registered"
 PUBLISH_FAILURE_MESSAGE = "event could not be published"
+
+MAX_OUTBOX_TOPIC_LENGTH = 200
+DEFAULT_OUTBOX_BATCH_SIZE = 100

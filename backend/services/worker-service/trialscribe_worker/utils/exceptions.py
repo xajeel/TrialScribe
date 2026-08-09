@@ -21,10 +21,6 @@ class UnsupportedJobKindError(WorkerServiceError):
     """No pipeline in this worker serves the requested kind of work."""
 
 
-class JobQueueUnavailableError(WorkerServiceError):
-    """A job could not be handed to the queue, so it was not accepted."""
-
-
 class JobCancelledError(WorkerServiceError):
     """A running job was asked to stop and did so at its next checkpoint."""
 

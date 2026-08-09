@@ -8,16 +8,20 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_db.runtime import DatabaseRuntime
-from trialscribe_events.publisher import EventPublisher
+from trialscribe_events.config import EventBusSettings
+from trialscribe_events.logs import event_context, get_event_logger
+from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.registry import EventRegistry
+from trialscribe_events.repositories.outbox import OutboxRepository
 
 from trialscribe_worker.api.dependencies import (
     get_current_account_id,
     get_current_organization_id,
     get_database_runtime,
+    get_event_settings,
     get_now,
+    get_outbox_relay,
     get_progress_store,
-    get_publisher,
     get_registry,
 )
 from trialscribe_worker.repositories.job_progress import JobProgressStore
@@ -25,24 +29,33 @@ from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.schemas.job import JobCreateRequest, JobResponse
 from trialscribe_worker.services.jobs import JobService
 
+logger = get_event_logger(__name__)
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 AccountId = Annotated[UUID, Depends(get_current_account_id)]
 OrganizationId = Annotated[UUID, Depends(get_current_organization_id)]
 Runtime = Annotated[DatabaseRuntime, Depends(get_database_runtime)]
 Progress = Annotated[JobProgressStore, Depends(get_progress_store)]
-Publisher = Annotated[EventPublisher, Depends(get_publisher)]
 Registry = Annotated[EventRegistry, Depends(get_registry)]
+EventSettings = Annotated[EventBusSettings, Depends(get_event_settings)]
+Relay = Annotated[OutboxRelay, Depends(get_outbox_relay)]
 Now = Annotated[datetime, Depends(get_now)]
 
 
 def _service(
     session: AsyncSession,
     progress: JobProgressStore,
-    publisher: EventPublisher,
     registry: EventRegistry,
+    topic_prefix: str,
 ) -> JobService:
-    return JobService(JobRepository(session), progress, publisher, registry)
+    return JobService(
+        JobRepository(session),
+        progress,
+        OutboxRepository(session),
+        registry,
+        topic_prefix,
+    )
 
 
 @router.post("", response_model=JobResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -52,13 +65,34 @@ async def request_job(
     organization_id: OrganizationId,
     runtime: Runtime,
     progress: Progress,
-    publisher: Publisher,
     registry: Registry,
+    event_settings: EventSettings,
+    relay: Relay,
     now: Now,
 ) -> JobResponse:
     async with runtime.transaction() as session:
-        service = _service(session, progress, publisher, registry)
-        return await service.request_job(organization_id, account_id, body, now)
+        service = _service(session, progress, registry, event_settings.topic_prefix)
+        response = await service.request_job(organization_id, account_id, body, now)
+
+    await _hand_over_promptly(relay)
+    return response
+
+
+async def _hand_over_promptly(relay: OutboxRelay) -> None:
+    """Push the job onto the queue now, rather than waiting for the next sweep.
+
+    The ticket and its queue message are already committed together, so the job
+    is safely queued whether or not this succeeds. This only shortens the wait on
+    a healthy system; a failure is the relay's problem, never the caller's.
+    """
+
+    try:
+        await relay.drain_once()
+    except Exception:
+        logger.warning(
+            "job.inline_handover_failed",
+            extra={"event_context": event_context(reason="relay_unavailable")},
+        )
 
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -67,11 +101,11 @@ async def read_job(
     organization_id: OrganizationId,
     runtime: Runtime,
     progress: Progress,
-    publisher: Publisher,
     registry: Registry,
+    event_settings: EventSettings,
 ) -> JobResponse:
     async with runtime.transaction() as session:
-        service = _service(session, progress, publisher, registry)
+        service = _service(session, progress, registry, event_settings.topic_prefix)
         return await service.get_job(organization_id, job_id)
 
 
@@ -85,10 +119,10 @@ async def cancel_job(
     organization_id: OrganizationId,
     runtime: Runtime,
     progress: Progress,
-    publisher: Publisher,
     registry: Registry,
+    event_settings: EventSettings,
     now: Now,
 ) -> JobResponse:
     async with runtime.transaction() as session:
-        service = _service(session, progress, publisher, registry)
+        service = _service(session, progress, registry, event_settings.topic_prefix)
         return await service.cancel_job(organization_id, job_id, now)

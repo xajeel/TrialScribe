@@ -35,7 +35,6 @@ JOB_NOT_FOUND_DETAIL = "job not found"
 JOB_ALREADY_FINISHED_DETAIL = "job already finished"
 INVALID_JOB_INPUT_DETAIL = "job request is not valid"
 UNSUPPORTED_JOB_KIND_DETAIL = "job kind is not supported"
-JOB_QUEUE_UNAVAILABLE_DETAIL = "job queue is unavailable"
 
 INTERNAL_ACCOUNT_ID_HEADER = "X-TrialScribe-Account-ID"
 INTERNAL_ORGANIZATION_ID_HEADER = "X-TrialScribe-Organization-ID"

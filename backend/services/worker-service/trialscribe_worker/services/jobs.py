@@ -6,14 +6,12 @@ from uuid import UUID, uuid4
 
 from trialscribe_events.contracts.job import JobRequested
 from trialscribe_events.registry import EventRegistry
-from trialscribe_events.publisher import EventPublisher
+from trialscribe_events.repositories.outbox import OutboxRepository
 from trialscribe_events.utils.constant import (
     JOB_EVENT_VERSION,
     JOB_REQUESTED_EVENT_TYPE,
     MAX_JOB_PARAMETERS_BYTES,
 )
-from trialscribe_events.utils.exceptions import EventPublishError
-
 from trialscribe_worker.models.job import Job
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
@@ -24,7 +22,6 @@ from trialscribe_worker.utils.exceptions import (
     InvalidJobInputError,
     JobAlreadyFinishedError,
     JobNotFoundError,
-    JobQueueUnavailableError,
     UnsupportedJobKindError,
 )
 
@@ -36,13 +33,15 @@ class JobService:
         self,
         jobs: JobRepository,
         progress: JobProgressStore,
-        publisher: EventPublisher,
+        outbox: OutboxRepository,
         registry: EventRegistry,
+        topic_prefix: str,
     ) -> None:
         self._jobs = jobs
         self._progress = progress
-        self._publisher = publisher
+        self._outbox = outbox
         self._registry = registry
+        self._topic_prefix = topic_prefix
 
     async def request_job(
         self,
@@ -51,11 +50,16 @@ class JobService:
         request: JobCreateRequest,
         now: datetime,
     ) -> JobResponse:
-        """Record a job and hand it to the queue before the caller's write lands.
+        """Record a job and its queue message in one indivisible write.
 
-        The queue message is sent while the transaction is still open, so a broker
-        that cannot take it undoes the ticket too. That order is deliberate: a
-        rejected request is recoverable, a ticket nobody will ever work on is not.
+        Sending the message to the broker from here would mean two things that can
+        each succeed alone: publish first and a worker can be handed a job whose
+        ticket has not committed, then give up and discard it; commit first and a
+        crash leaves a ticket nobody was ever told about. A bounded retry only
+        narrows that window — it was measured closing on a real broker (bug B29).
+        Writing the message into the outbox beside the ticket removes the question
+        entirely: the message exists exactly when the job does. A relay hands it to
+        the broker afterwards.
         """
 
         kind = self._validate_kind(request.kind)
@@ -73,7 +77,7 @@ class JobService:
                 parameters=parameters,
             )
         )
-        await self._publish(job, now)
+        await self._enqueue(job, now)
         return self._response(job, None)
 
     async def get_job(self, organization_id: UUID, job_id: UUID) -> JobResponse:
@@ -128,7 +132,7 @@ class JobService:
             raise InvalidJobInputError
         return parameters
 
-    async def _publish(self, job: Job, now: datetime) -> None:
+    async def _enqueue(self, job: Job, now: datetime) -> None:
         envelope = self._registry.build(
             event_type=JOB_REQUESTED_EVENT_TYPE,
             version=JOB_EVENT_VERSION,
@@ -147,10 +151,10 @@ class JobService:
                 parameters=job.parameters,
             ),
         )
-        try:
-            await self._publisher.publish(envelope)
-        except EventPublishError:
-            raise JobQueueUnavailableError from None
+        await self._outbox.enqueue(
+            self._registry.topic_of(self._topic_prefix, envelope),
+            envelope,
+        )
 
     def _response(self, job: Job, live_progress: int | None) -> JobResponse:
         return JobResponse(

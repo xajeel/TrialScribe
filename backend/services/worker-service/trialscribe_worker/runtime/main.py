@@ -11,6 +11,7 @@ from trialscribe_db.runtime import create_database_runtime
 from trialscribe_events.config import EventBusSettings
 from trialscribe_events.consumer import EventConsumer
 from trialscribe_events.contracts.job import register_job_events
+from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.publisher import create_event_publisher
 from trialscribe_events.registry import EventRegistry
 from trialscribe_events.topics import ensure_topics
@@ -54,13 +55,25 @@ async def run_worker(stop: asyncio.Event) -> None:
         )
         return consumer
 
+    relay = OutboxRelay(
+        runtime,
+        publisher,
+        worker_settings.outbox_batch_size,
+        worker_settings.outbox_poll_seconds,
+    )
+
     try:
         await publisher.start()
         await ensure_topics(
             event_settings,
             list(registry.topics(event_settings.topic_prefix)),
         )
-        await ConsumerSupervisor(build_consumer, worker_settings).run(stop)
+        # The relay hands stored events to the broker; the supervisor reads them
+        # back and runs them. Both end together when the stop event is set.
+        await asyncio.gather(
+            ConsumerSupervisor(build_consumer, worker_settings).run(stop),
+            relay.run(stop),
+        )
     finally:
         await publisher.stop()
         await redis.aclose()

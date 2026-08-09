@@ -9,7 +9,7 @@ from trialscribe_events.contracts.job import JobRequested, register_job_events
 from trialscribe_events.envelope import EventEnvelope
 from trialscribe_events.registry import EventRegistry
 from trialscribe_events.utils.constant import MAX_JOB_PARAMETERS_BYTES
-from trialscribe_events.utils.exceptions import EventPublishError
+from trialscribe_events.models.outbox_event import OutboxEvent
 
 from trialscribe_worker.models.job import Job
 from trialscribe_worker.repositories.job_progress import JobProgressStore
@@ -24,7 +24,6 @@ from trialscribe_worker.utils.exceptions import (
     InvalidJobInputError,
     JobAlreadyFinishedError,
     JobNotFoundError,
-    JobQueueUnavailableError,
     UnsupportedJobKindError,
 )
 
@@ -34,6 +33,7 @@ ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000033")
 CONVERSATION_ID = UUID("00000000-0000-4000-8000-000000000034")
 NOW = datetime(2026, 8, 9, 11, 0, 0, tzinfo=UTC)
 TTL_SECONDS = 3600
+TOPIC_PREFIX = "trialscribe"
 
 
 class FakeKeyValueStore:
@@ -104,30 +104,35 @@ class FakeJobRepository:
         return job
 
 
-class FakePublisher:
-    def __init__(self, fail: bool = False) -> None:
-        self.published: list[EventEnvelope] = []
-        self.fail = fail
+class FakeOutbox:
+    """Collect what the request stored beside the ticket, in one transaction."""
 
-    async def publish(self, envelope: EventEnvelope) -> None:
-        if self.fail:
-            raise EventPublishError("event could not be published")
-        self.published.append(envelope)
+    def __init__(self) -> None:
+        self.stored: list[OutboxEvent] = []
+
+    async def enqueue(self, topic: str, envelope: EventEnvelope) -> OutboxEvent:
+        record = OutboxEvent(
+            topic=topic,
+            partition_key=envelope.partition_key(),
+            payload=envelope.to_bytes(),
+            headers={name: value.decode("utf-8") for name, value in envelope.headers()},
+        )
+        self.stored.append(record)
+        return record
 
 
-def build_service(
-    fail_publish: bool = False,
-) -> tuple[JobService, FakeJobRepository, FakePublisher, FakeKeyValueStore]:
+def build_service() -> tuple[JobService, FakeJobRepository, FakeOutbox, FakeKeyValueStore]:
     repository = FakeJobRepository()
     client = FakeKeyValueStore()
-    publisher = FakePublisher(fail=fail_publish)
+    outbox = FakeOutbox()
     service = JobService(
         repository,  # type: ignore[arg-type]
         JobProgressStore(client, TTL_SECONDS),
-        publisher,  # type: ignore[arg-type]
+        outbox,  # type: ignore[arg-type]
         register_job_events(EventRegistry()),
+        TOPIC_PREFIX,
     )
-    return service, repository, publisher, client
+    return service, repository, outbox, client
 
 
 def request(**overrides: Any) -> JobCreateRequest:
@@ -141,7 +146,13 @@ def stored_job(repository: FakeJobRepository) -> Job:
 
 
 def test_a_requested_job_is_recorded_queued_and_announced_exactly_once() -> None:
-    service, repository, publisher, _ = build_service()
+    """The ticket and its queue message are written together, or not at all.
+
+    Publishing to the broker from the request would let a worker be handed a job
+    whose ticket has not committed, give up, and discard it (bug B29).
+    """
+
+    service, repository, outbox, _ = build_service()
 
     job = asyncio.run(
         service.request_job(ORGANIZATION_ID, ACCOUNT_ID, request(), NOW)
@@ -149,11 +160,13 @@ def test_a_requested_job_is_recorded_queued_and_announced_exactly_once() -> None
 
     assert job.status is JobStatus.QUEUED
     assert job.attempt == 0
-    assert len(publisher.published) == 1
-    envelope = publisher.published[0]
+    assert len(outbox.stored) == 1
+    record = outbox.stored[0]
+    assert record.topic == "trialscribe.job.v1"
+    assert record.partition_key == str(job.id).encode("utf-8")
+    envelope = EventEnvelope.from_bytes(record.payload)
     assert envelope.subject == str(job.id)
     assert envelope.correlation_id == job.correlation_id
-    assert envelope.partition_key() == str(job.id).encode("utf-8")
     payload = JobRequested.model_validate(envelope.payload)
     assert payload.job_id == job.id
     assert payload.attempt == 1
@@ -161,17 +174,18 @@ def test_a_requested_job_is_recorded_queued_and_announced_exactly_once() -> None
     assert stored_job(repository).id == job.id
 
 
-def test_a_queue_that_cannot_take_the_job_refuses_the_request() -> None:
-    service, _, publisher, _ = build_service(fail_publish=True)
+def test_the_stored_message_carries_the_routing_headers_a_consumer_needs() -> None:
+    service, _, outbox, _ = build_service()
 
-    with pytest.raises(JobQueueUnavailableError):
-        asyncio.run(service.request_job(ORGANIZATION_ID, ACCOUNT_ID, request(), NOW))
+    asyncio.run(service.request_job(ORGANIZATION_ID, ACCOUNT_ID, request(), NOW))
 
-    assert publisher.published == []
+    headers = outbox.stored[0].headers
+    assert headers["x-trialscribe-event-type"] == "job.generation.requested"
+    assert headers["x-trialscribe-event-version"] == "1"
 
 
 def test_a_kind_this_worker_does_not_serve_is_refused_before_anything_is_written() -> None:
-    service, repository, publisher, _ = build_service()
+    service, repository, outbox, _ = build_service()
 
     with pytest.raises(UnsupportedJobKindError):
         asyncio.run(
@@ -184,7 +198,7 @@ def test_a_kind_this_worker_does_not_serve_is_refused_before_anything_is_written
         )
 
     assert repository.jobs == {}
-    assert publisher.published == []
+    assert outbox.stored == []
 
 
 def test_parameters_larger_than_the_contract_allows_are_refused() -> None:

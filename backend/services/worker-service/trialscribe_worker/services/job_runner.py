@@ -205,6 +205,21 @@ class JobRunner:
         error_code: JobErrorCode | None,
         progress: int | None = None,
     ) -> None:
+        """Record the job's one outcome, then tidy up without risking it.
+
+        The terminal row goes into the event consumer's transaction, so anything
+        raised after it rolls that row back together with the receipt saying the
+        event was handled — the job would then be rerun and finally dead-lettered
+        while its ticket still read `running` (bug B28). Clearing the live
+        progress keys is throwaway housekeeping and they already carry a TTL, so
+        a failure here is logged and swallowed rather than allowed to undo an
+        answer that is already true.
+
+        The clear deliberately stays after the terminal write: a leftover key can
+        only equal or lag the durable value, so reading it can never overstate
+        how far a job got.
+        """
+
         await JobRepository(session).finish(
             job_id,
             status,
@@ -212,7 +227,13 @@ class JobRunner:
             error_code=error_code,
             progress=progress,
         )
-        await self._progress.clear(job_id)
+        try:
+            await self._progress.clear(job_id)
+        except Exception:
+            logger.warning(
+                "job.progress_cleanup_failed",
+                extra={"event_context": event_context(reason=status.value)},
+            )
 
     async def _report(self, job_id: UUID, state: _RunState, percent: int) -> None:
         """Publish progress, and write it down often enough to survive a restart."""

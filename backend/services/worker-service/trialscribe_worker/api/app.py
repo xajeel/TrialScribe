@@ -24,7 +24,6 @@ from trialscribe_worker.utils.constant import (
     INVALID_JOB_INPUT_DETAIL,
     JOB_ALREADY_FINISHED_DETAIL,
     JOB_NOT_FOUND_DETAIL,
-    JOB_QUEUE_UNAVAILABLE_DETAIL,
     LIVENESS_STATUS,
     READINESS_STATUS,
     SERVICE_NAME,
@@ -35,7 +34,6 @@ from trialscribe_worker.utils.exceptions import (
     InvalidJobInputError,
     JobAlreadyFinishedError,
     JobNotFoundError,
-    JobQueueUnavailableError,
     UnsupportedJobKindError,
     WorkerServiceError,
 )
@@ -88,8 +86,6 @@ async def worker_error_response(
         status_code, detail = 422, UNSUPPORTED_JOB_KIND_DETAIL
     elif isinstance(error, InvalidJobInputError):
         status_code, detail = 422, INVALID_JOB_INPUT_DETAIL
-    elif isinstance(error, JobQueueUnavailableError):
-        status_code, detail = 503, JOB_QUEUE_UNAVAILABLE_DETAIL
     else:
         status_code, detail = 503, SERVICE_UNAVAILABLE_DETAIL
     return JSONResponse(status_code=status_code, content={"detail": detail})

@@ -24,6 +24,8 @@ class WorkerSettings(BaseSettings):
         ge=MIN_PROGRESS + 1,
         le=MAX_PROGRESS,
     )
+    outbox_poll_seconds: float = Field(default=1.0, gt=0)
+    outbox_batch_size: int = Field(default=100, ge=1)
     supervisor_restart_seconds: float = Field(default=1.0, gt=0)
     supervisor_restart_cap_seconds: float = Field(default=30.0, gt=0)
 

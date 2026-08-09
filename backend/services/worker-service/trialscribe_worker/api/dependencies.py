@@ -7,6 +7,8 @@ from uuid import UUID
 from fastapi import Header, HTTPException, Request
 
 from trialscribe_db.runtime import DatabaseRuntime
+from trialscribe_events.config import EventBusSettings
+from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.publisher import EventPublisher
 from trialscribe_events.registry import EventRegistry
 
@@ -41,6 +43,22 @@ def get_publisher(request: Request) -> EventPublisher:
 
 def get_registry(request: Request) -> EventRegistry:
     return request.app.state.event_registry
+
+
+def get_event_settings(request: Request) -> EventBusSettings:
+    return request.app.state.event_settings
+
+
+def get_outbox_relay(request: Request) -> OutboxRelay:
+    """Build the relay the request uses to hand its own event over promptly."""
+
+    settings = get_settings(request)
+    return OutboxRelay(
+        get_database_runtime(request),
+        get_publisher(request),
+        settings.outbox_batch_size,
+        settings.outbox_poll_seconds,
+    )
 
 
 def get_progress_store(request: Request) -> JobProgressStore:

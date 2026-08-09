@@ -8,16 +8,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trialscribe_events.contracts.job import register_job_events
+from trialscribe_events.config import EventBusSettings
 from trialscribe_events.envelope import EventEnvelope
+from trialscribe_events.models.outbox_event import OutboxEvent
 from trialscribe_events.registry import EventRegistry
-from trialscribe_events.utils.exceptions import EventPublishError
 
 from trialscribe_worker.api.app import app
 from trialscribe_worker.api.dependencies import (
     get_database_runtime,
+    get_event_settings,
     get_now,
+    get_outbox_relay,
     get_progress_store,
-    get_publisher,
     get_registry,
 )
 from trialscribe_worker.models.job import Job
@@ -115,26 +117,53 @@ class FakeJobRepository:
         return job
 
 
-class FakePublisher:
+class FakeOutbox:
+    """Record what the request stored beside its ticket."""
+
+    stored: list[OutboxEvent] = []
+
+    def __init__(self, _session: Any) -> None:
+        pass
+
+    async def enqueue(self, topic: str, envelope: EventEnvelope) -> OutboxEvent:
+        record = OutboxEvent(
+            topic=topic,
+            partition_key=envelope.partition_key(),
+            payload=envelope.to_bytes(),
+            headers={name: value.decode("utf-8") for name, value in envelope.headers()},
+        )
+        type(self).stored.append(record)
+        return record
+
+
+class FakeRelay:
+    """Stand in for the sweeper that hands stored events to the broker."""
+
     def __init__(self) -> None:
-        self.published: list[EventEnvelope] = []
+        self.drains = 0
         self.fail = False
 
-    async def publish(self, envelope: EventEnvelope) -> None:
+    async def drain_once(self) -> int:
+        self.drains += 1
         if self.fail:
-            raise EventPublishError("event could not be published")
-        self.published.append(envelope)
+            raise ConnectionError("broker unreachable do-not-print")
+        return len(FakeOutbox.stored)
 
 
 @pytest.fixture
 def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeJobRepository.jobs = {}
+    FakeOutbox.stored = []
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
         FakeJobRepository,
     )
+    monkeypatch.setattr(
+        "trialscribe_worker.api.jobs.OutboxRepository",
+        FakeOutbox,
+    )
     client_store = FakeKeyValueStore()
-    publisher = FakePublisher()
+    relay = FakeRelay()
     runtime = FakeRuntime()
 
     app.dependency_overrides[get_database_runtime] = lambda: runtime
@@ -142,13 +171,17 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         client_store,
         TTL_SECONDS,
     )
-    app.dependency_overrides[get_publisher] = lambda: publisher
+    app.dependency_overrides[get_outbox_relay] = lambda: relay
     app.dependency_overrides[get_registry] = lambda: register_job_events(EventRegistry())
+    app.dependency_overrides[get_event_settings] = lambda: EventBusSettings(
+        bootstrap_servers="localhost:9092",
+    )
     app.dependency_overrides[get_now] = lambda: NOW
     try:
         yield {
             "client": TestClient(app),
-            "publisher": publisher,
+            "relay": relay,
+            "outbox": FakeOutbox,
             "store": client_store,
             "runtime": runtime,
         }
@@ -173,8 +206,10 @@ def test_requesting_a_job_is_accepted_and_announced(api: dict[str, Any]) -> None
     assert body["progress"] == 0
     assert body["attempt"] == 0
     assert body["organization_id"] == str(ORGANIZATION_ID)
-    assert len(api["publisher"].published) == 1
-    assert api["publisher"].published[0].subject == body["id"]
+    assert len(api["outbox"].stored) == 1
+    stored = EventEnvelope.from_bytes(api["outbox"].stored[0].payload)
+    assert stored.subject == body["id"]
+    assert api["relay"].drains == 1
 
 
 def test_a_requested_job_can_be_read_back_with_its_live_progress(
@@ -241,23 +276,30 @@ def test_a_kind_this_worker_does_not_serve_is_rejected(api: dict[str, Any]) -> N
     assert response.json() == {"detail": "job kind is not supported"}
 
 
-def test_a_queue_that_will_not_take_the_job_reports_it_unavailable(
+def test_an_unreachable_broker_no_longer_costs_the_caller_their_job(
     api: dict[str, Any],
 ) -> None:
-    api["publisher"].fail = True
+    """A committed ticket is a queued job, broker reachable or not.
+
+    The message is already stored beside the ticket, so handing it over is the
+    relay's job and its failure is not the caller's problem (bug B29).
+    """
+
+    api["relay"].fail = True
 
     response = api["client"].post("/jobs", json={"kind": "probe"}, headers=HEADERS)
 
-    assert response.status_code == 503
-    assert response.json() == {"detail": "job queue is unavailable"}
+    assert response.status_code == 202
+    assert response.json()["status"] == "queued"
+    assert len(api["outbox"].stored) == 1
+    assert api["runtime"].commits == 1
 
 
-def test_a_failed_request_never_commits_its_ticket(api: dict[str, Any]) -> None:
-    api["publisher"].fail = True
-
-    api["client"].post("/jobs", json={"kind": "probe"}, headers=HEADERS)
+def test_a_rejected_request_never_commits_its_ticket(api: dict[str, Any]) -> None:
+    api["client"].post("/jobs", json={"kind": "section-generation"}, headers=HEADERS)
 
     assert api["runtime"].commits == 0
+    assert api["outbox"].stored == []
 
 
 def test_a_request_without_organization_context_is_refused(
