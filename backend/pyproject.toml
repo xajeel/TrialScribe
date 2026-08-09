@@ -17,6 +17,7 @@ markers = [
 [tool.uv.workspace]
 members = [
     "packages/database",
+    "packages/events",
     "services/api-gateway",
     "services/auth-service",
     "services/user-service",
@@ -26,3 +27,4 @@ members = [
 
 [tool.uv.sources]
 trialscribe-database = { workspace = true }
+trialscribe-events = { workspace = true }
