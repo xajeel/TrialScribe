@@ -177,16 +177,20 @@ def test_dead_letter_sends_the_untouched_record_to_the_dlq_topic() -> None:
     assert dict(record.headers)[DEAD_LETTER_REASON_HEADER] == b"undecodable"
 
 
-def test_dead_letter_failure_never_breaks_the_consumer_loop() -> None:
+def test_dead_letter_failure_is_raised_so_the_record_can_be_redelivered() -> None:
     publisher = build_publisher(FakeProducer(fail=True))
 
-    asyncio.run(
-        publisher.publish_dead_letter(
-            "trialscribe.job.v1",
-            b"corrupt-bytes",
-            DeadLetterReason.HANDLER_FAILED,
+    with pytest.raises(EventPublishError) as error:
+        asyncio.run(
+            publisher.publish_dead_letter(
+                "trialscribe.job.v1",
+                b"corrupt-bytes",
+                DeadLetterReason.HANDLER_FAILED,
+            )
         )
-    )
+
+    assert str(error.value) == "event could not be published"
+    assert "do-not-print" not in str(error.value)
 
 
 def test_created_producer_is_idempotent_and_waits_for_all_replicas(

@@ -13,7 +13,7 @@ from trialscribe_events.consumer import EventConsumer
 from trialscribe_events.envelope import EventEnvelope
 from trialscribe_events.registry import EventRegistry
 from trialscribe_events.utils.enum import DeadLetterReason
-from trialscribe_events.utils.exceptions import UnknownEventTypeError
+from trialscribe_events.utils.exceptions import EventPublishError, UnknownEventTypeError
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000002")
 CORRELATION_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -82,8 +82,9 @@ class FakeRuntime:
 
 
 class FakePublisher:
-    def __init__(self) -> None:
+    def __init__(self, fail: bool = False) -> None:
         self.dead_letters: list[tuple[str, bytes | None, DeadLetterReason]] = []
+        self.fail = fail
 
     async def publish_dead_letter(
         self,
@@ -92,6 +93,8 @@ class FakePublisher:
         reason: DeadLetterReason,
         key: bytes | None = None,
     ) -> None:
+        if self.fail:
+            raise EventPublishError("event could not be published")
         self.dead_letters.append((topic, raw_value, reason))
 
 
@@ -326,6 +329,44 @@ def test_start_subscribes_to_every_registered_topic_and_stop_closes_it() -> None
     assert kafka.started is True
     assert kafka.stopped is True
     assert consumer._registry.topics("trialscribe") == (TOPIC,)
+
+
+def test_an_unreadable_record_we_cannot_set_aside_is_never_committed() -> None:
+    runtime, publisher = FakeRuntime(), FakePublisher(fail=True)
+    consumer = build_consumer(runtime, publisher)
+    kafka = FakeKafkaConsumer([FakeRecord(b"not-an-envelope")])
+
+    with pytest.raises(EventPublishError):
+        asyncio.run(_run(consumer, kafka))
+
+    assert kafka.commits == 0
+
+
+def test_an_exhausted_record_we_cannot_set_aside_is_never_committed() -> None:
+    runtime, publisher = FakeRuntime(), FakePublisher(fail=True)
+    consumer = build_consumer(runtime, publisher, max_delivery_attempts=2)
+
+    async def handler(received: EventEnvelope, payload: BaseModel, session: Any) -> None:
+        raise RuntimeError("handler exploded do-not-print")
+
+    consumer.register_handler("job.generation.requested", 1, handler)
+    kafka = FakeKafkaConsumer([FakeRecord(envelope().to_bytes())])
+
+    with pytest.raises(EventPublishError):
+        asyncio.run(_run(consumer, kafka))
+
+    assert kafka.commits == 0
+
+
+def test_a_settled_record_is_still_committed_when_the_broker_is_healthy() -> None:
+    runtime, publisher = FakeRuntime(), FakePublisher()
+    consumer = build_consumer(runtime, publisher)
+    kafka = FakeKafkaConsumer([FakeRecord(b"not-an-envelope")])
+
+    asyncio.run(_run(consumer, kafka))
+
+    assert len(publisher.dead_letters) == 1
+    assert kafka.commits == 1
 
 
 async def _run(consumer: EventConsumer, kafka: FakeKafkaConsumer) -> None:

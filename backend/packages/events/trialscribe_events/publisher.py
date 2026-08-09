@@ -56,7 +56,13 @@ class EventPublisher:
         reason: DeadLetterReason,
         key: bytes | None = None,
     ) -> None:
-        """Move a record aside untouched; never raise into the consumer loop."""
+        """Move a record aside untouched, or refuse to pretend that it was.
+
+        Raises `EventPublishError` when the record could not be stored. The caller
+        must not commit a record it failed to set aside: leaving the offset
+        uncommitted is the only thing that brings the record back after the broker
+        recovers. A stalled partition is recoverable; a dropped event is not.
+        """
 
         target = dead_letter_topic(topic)
         try:
@@ -71,7 +77,7 @@ class EventPublisher:
                 "event.dead_letter_failed",
                 extra={"event_context": event_context(topic=target, reason=reason.value)},
             )
-            return
+            raise EventPublishError(PUBLISH_FAILURE_MESSAGE) from None
         logger.warning(
             "event.dead_lettered",
             extra={"event_context": event_context(topic=target, reason=reason.value)},

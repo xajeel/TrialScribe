@@ -78,14 +78,26 @@ class EventConsumer:
             await self._consumer.stop()
 
     async def run(self) -> None:
-        """Handle records until the consumer is stopped, committing every one."""
+        """Handle records until the consumer is stopped, committing each one it settled.
+
+        A record is committed only after it was handled, recognised as a duplicate,
+        or stored in the dead-letter topic. If it could be settled in none of those
+        ways the error travels out of here with the offset uncommitted, so the
+        record is redelivered instead of lost.
+        """
 
         async for record in self._consumer:
             await self.process(record)
             await self._consumer.commit()
 
     async def process(self, record: Any) -> None:
-        """Handle one record, absorbing every failure the queue must survive."""
+        """Settle one record.
+
+        Absorbs every failure of the *event* — unreadable, unregistered, contract
+        mismatch, or a handler that keeps failing — by setting it aside. It does not
+        absorb failure of the *broker*: if the record cannot be set aside either,
+        that error is raised so the caller leaves the offset uncommitted.
+        """
 
         decoded = await self._decode(record)
         if decoded is None:
@@ -174,7 +186,7 @@ class EventConsumer:
         envelope: EventEnvelope | None = None,
     ) -> None:
         logger.error(
-            "event.moved_to_dead_letter",
+            "event.dead_lettering",
             extra={
                 "event_context": event_context(
                     envelope,
