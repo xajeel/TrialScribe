@@ -19,6 +19,7 @@ Commands:
   auth     Manage authentication: keys or test
   user     Manage organization RBAC: test
   ai       Manage AI Engine conversation workspaces: test
+  events   Manage the Kafka event backbone: test
   help     Show this help
 
 Compatibility aliases:
@@ -44,6 +45,12 @@ ensure_env() {
     REDIS_PORT
     REDIS_URL
     KAFKA_PORT
+    EVENTS_BOOTSTRAP_SERVERS
+    EVENTS_TOPIC_PREFIX
+    EVENTS_CLIENT_ID
+    EVENTS_CONSUMER_GROUP
+    EVENTS_MAX_DELIVERY_ATTEMPTS
+    EVENTS_RETRY_BACKOFF_SECONDS
     GATEWAY_AUTH_SERVICE_URL
     GATEWAY_USER_SERVICE_URL
     GATEWAY_AI_SERVICE_URL
@@ -164,6 +171,48 @@ run_ai_engine() {
       ;;
     *)
       echo "Unknown ai action: ${action:-<missing>}" >&2
+      echo "Choose: test" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_event_backbone() {
+  local action="${1:-}"
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-events-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/event-backbone.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    test)
+      (
+        cd "$repo_root"
+        cleanup_events_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_events_test EXIT
+        cleanup_events_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres kafka
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-events \
+            python "$repo_root/scripts/check_event_backbone.py" \
+              --project-name trialscribe-events-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/event-backbone.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown events action: ${action:-<missing>}" >&2
       echo "Choose: test" >&2
       return 1
       ;;
@@ -433,6 +482,7 @@ case "${1:-}" in
       cd "$repo_root/backend"
       uv run ruff check \
         packages/database \
+        packages/events \
         services/api-gateway \
         services/auth-service \
         services/user-service \
@@ -447,6 +497,7 @@ case "${1:-}" in
       cd "$repo_root/backend"
       uv run pytest \
         packages/database/tests \
+        packages/events/tests \
         services/api-gateway/tests \
         services/auth-service/tests \
         services/user-service/tests \
@@ -473,6 +524,9 @@ case "${1:-}" in
     ;;
   ai)
     run_ai_engine "${2:-}"
+    ;;
+  events)
+    run_event_backbone "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)
