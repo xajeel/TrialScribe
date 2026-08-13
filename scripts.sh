@@ -21,6 +21,7 @@ Commands:
   ai       Manage AI Engine conversation workspaces: test
   events   Manage the Kafka event backbone: test
   jobs     Manage the background job runtime: test
+  runtime  Manage the AI provider runtime: test
   help     Show this help
 
 Compatibility aliases:
@@ -59,6 +60,23 @@ ensure_env() {
     WORKER_OUTBOX_BATCH_SIZE
     WORKER_SUPERVISOR_RESTART_SECONDS
     WORKER_SUPERVISOR_RESTART_CAP_SECONDS
+    WORKER_CHAT_PROVIDER
+    WORKER_EMBEDDING_PROVIDER
+    WORKER_CHAT_MODEL
+    WORKER_EMBEDDING_MODEL
+    WORKER_EMBEDDING_DIMENSIONS
+    WORKER_PROVIDER_TIMEOUT_SECONDS
+    WORKER_PROVIDER_RETRY_ATTEMPTS
+    WORKER_PROVIDER_RETRY_BASE_SECONDS
+    WORKER_PROVIDER_RETRY_MAX_SECONDS
+    WORKER_PROVIDER_MAX_CONCURRENCY
+    WORKER_CIRCUIT_FAILURE_THRESHOLD
+    WORKER_CIRCUIT_OPEN_SECONDS
+    WORKER_PRICING_VERSION
+    DEEPSEEK_API_KEY
+    DEEPSEEK_BASE_URL
+    CHROMA_URL
+    CHROMA_PORT
     GATEWAY_AUTH_SERVICE_URL
     GATEWAY_USER_SERVICE_URL
     GATEWAY_AI_SERVICE_URL
@@ -266,6 +284,48 @@ run_background_jobs() {
       echo "Choose: test" >&2
       return 1
       ;;
+    esac
+}
+
+run_ai_runtime() {
+  local action="${1:-}"
+  local -a test_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-ai-runtime-test
+    -f docker-compose.yml
+    -f infra/testing/isolated.yml
+    -f infra/testing/ai-runtime.yml
+    --profile infrastructure
+  )
+
+  ensure_env
+  case "$action" in
+    test)
+      (
+        cd "$repo_root"
+        cleanup_ai_runtime_test() {
+          "${test_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_ai_runtime_test EXIT
+        cleanup_ai_runtime_test
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka chroma
+        (
+          cd "$repo_root/backend"
+          uv run --frozen --package trialscribe-worker \
+            python "$repo_root/scripts/check_ai_runtime.py" \
+              --project-name trialscribe-ai-runtime-test \
+              --compose-file docker-compose.yml \
+              --compose-file infra/testing/isolated.yml \
+              --compose-file infra/testing/ai-runtime.yml
+        )
+      )
+      ;;
+    *)
+      echo "Unknown runtime action: ${action:-<missing>}" >&2
+      echo "Choose: test" >&2
+      return 1
+      ;;
   esac
 }
 
@@ -444,7 +504,7 @@ run_infrastructure() {
       ensure_env
       (
         cd "$repo_root"
-        "${dev_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka
+        "${dev_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka chroma
       )
       ;;
     check)
@@ -465,7 +525,7 @@ run_infrastructure() {
           "${test_compose[@]}" down --volumes --remove-orphans || true
         }
         trap cleanup_test_infrastructure EXIT
-        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka
+        "${test_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka chroma
         python3 "$repo_root/scripts/check_infrastructure.py" \
           --project-name trialscribe-test \
           --compose-file docker-compose.yml \
@@ -585,6 +645,9 @@ case "${1:-}" in
     ;;
   jobs)
     run_background_jobs "${2:-}"
+    ;;
+  runtime)
+    run_ai_runtime "${2:-}"
     ;;
   sync)
     (cd "$repo_root/backend" && uv sync --all-packages)

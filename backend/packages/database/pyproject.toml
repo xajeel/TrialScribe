@@ -2,7 +2,7 @@
 name = "trialscribe-database"
 version = "0.1.0"
 description = "Shared PostgreSQL runtime and migration foundation for TrialScribe"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic==1.18.5",
     "pgvector==0.5.0",

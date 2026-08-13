@@ -2,7 +2,7 @@
 name = "trialscribe-user"
 version = "0.1.0"
 description = "TrialScribe user service"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi[standard]>=0.115.14,<0.116",
     "trialscribe-database",

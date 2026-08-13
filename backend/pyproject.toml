@@ -2,7 +2,7 @@
 name = "trialscribe-backend"
 version = "0.1.0"
 description = "TrialScribe backend — uv workspace root for all Python services"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = ["trialscribe-database"]
 
 [dependency-groups]

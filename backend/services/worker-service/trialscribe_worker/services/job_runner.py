@@ -42,6 +42,11 @@ class JobContext:
     parameters: dict[str, Any]
     report: Callable[[int], Awaitable[None]]
     check_cancelled: Callable[[], Awaitable[None]]
+    organization_id: UUID
+    account_id: UUID
+    conversation_id: UUID | None = None
+    gateway: object | None = None
+    evidence: object | None = None
 
 
 class JobPipeline(Protocol):
@@ -116,6 +121,9 @@ class JobRunner:
             parameters=dict(job.parameters or {}),
             report=lambda percent: self._report(job.id, state, percent),
             check_cancelled=lambda: self._check_cancelled(job.id, state),
+            organization_id=job.organization_id,
+            account_id=job.requested_by_account_id,
+            conversation_id=job.conversation_id,
         )
 
         try:

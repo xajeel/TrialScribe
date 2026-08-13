@@ -5,7 +5,25 @@ from typing import Any
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from trialscribe_worker.utils.constant import MAX_PROGRESS, MIN_PROGRESS
+from trialscribe_worker.utils.constant import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_CHAT_PROVIDER,
+    DEFAULT_CHROMA_URL,
+    DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
+    DEFAULT_CIRCUIT_OPEN_SECONDS,
+    DEFAULT_DEEPSEEK_BASE_URL,
+    DEFAULT_EMBEDDING_DIMENSIONS,
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_PROVIDER_MAX_CONCURRENCY,
+    DEFAULT_PROVIDER_RETRY_ATTEMPTS,
+    DEFAULT_PROVIDER_RETRY_BASE_SECONDS,
+    DEFAULT_PROVIDER_RETRY_MAX_SECONDS,
+    DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+    MAX_PROGRESS,
+    MIN_PROGRESS,
+    PRICING_VERSION_DEFAULT,
+)
 
 
 class WorkerSettings(BaseSettings):
@@ -28,6 +46,34 @@ class WorkerSettings(BaseSettings):
     outbox_batch_size: int = Field(default=100, ge=1)
     supervisor_restart_seconds: float = Field(default=1.0, gt=0)
     supervisor_restart_cap_seconds: float = Field(default=30.0, gt=0)
+    chat_provider: str = Field(default=DEFAULT_CHAT_PROVIDER, min_length=1)
+    embedding_provider: str = Field(default=DEFAULT_EMBEDDING_PROVIDER, min_length=1)
+    chat_model: str = Field(default=DEFAULT_CHAT_MODEL, min_length=1)
+    embedding_model: str = Field(default=DEFAULT_EMBEDDING_MODEL, min_length=1)
+    embedding_dimensions: int = Field(default=DEFAULT_EMBEDDING_DIMENSIONS, gt=0)
+    provider_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    provider_retry_attempts: int = Field(default=DEFAULT_PROVIDER_RETRY_ATTEMPTS, ge=1)
+    provider_retry_base_seconds: float = Field(
+        default=DEFAULT_PROVIDER_RETRY_BASE_SECONDS,
+        gt=0,
+    )
+    provider_retry_max_seconds: float = Field(
+        default=DEFAULT_PROVIDER_RETRY_MAX_SECONDS,
+        gt=0,
+    )
+    provider_max_concurrency: int = Field(
+        default=DEFAULT_PROVIDER_MAX_CONCURRENCY,
+        ge=1,
+    )
+    circuit_failure_threshold: int = Field(
+        default=DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
+        ge=1,
+    )
+    circuit_open_seconds: float = Field(default=DEFAULT_CIRCUIT_OPEN_SECONDS, gt=0)
+    pricing_version: str = Field(default=PRICING_VERSION_DEFAULT, min_length=1)
 
     @field_validator("supervisor_restart_cap_seconds")
     @classmethod
@@ -63,3 +109,27 @@ class WorkerRedisSettings(BaseSettings):
         """Reveal the URL only for client construction."""
 
         return self.redis_url.get_secret_value()
+
+
+class WorkerSecretSettings(BaseSettings):
+    """Provider credentials and index location, which carry no WORKER_ prefix."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
+
+    deepseek_api_key: SecretStr = Field(default=SecretStr(""))
+    deepseek_base_url: str = Field(default=DEFAULT_DEEPSEEK_BASE_URL, min_length=1)
+    chroma_url: str = Field(default=DEFAULT_CHROMA_URL, min_length=1)
+
+    def api_key(self) -> str:
+        """Reveal the DeepSeek key only for client construction."""
+
+        return self.deepseek_api_key.get_secret_value()
+
+    def chroma_endpoint(self) -> str:
+        """Return the Chroma HTTP origin used to build the async client."""
+
+        return self.chroma_url

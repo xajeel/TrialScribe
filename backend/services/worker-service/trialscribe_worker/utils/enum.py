@@ -39,3 +39,29 @@ class JobKind(StrEnum):
     """The kinds of background work this worker knows how to run."""
 
     PROBE = "probe"
+    PROVIDER_PROBE = "provider_probe"
+
+
+class ProviderName(StrEnum):
+    """Which backend the gateway is configured to call."""
+
+    FAKE = "fake"
+    DEEPSEEK = "deepseek"
+    FASTEMBED = "fastembed"
+
+
+class ProviderOperation(StrEnum):
+    """Whether a metered call was a chat completion or an embedding."""
+
+    CHAT = "chat"
+    EMBED = "embed"
+
+
+class ProviderOutcome(StrEnum):
+    """How a single provider attempt ended, in bounded terms safe to store."""
+
+    SUCCEEDED = "succeeded"
+    TIMEOUT = "timeout"
+    RATE_LIMITED = "rate_limited"
+    CIRCUIT_OPEN = "circuit_open"
+    ERROR = "error"

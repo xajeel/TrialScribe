@@ -72,6 +72,25 @@ services:
       start_period: 30s
       retries: 20
 
+  chroma:
+    image: chromadb/chroma:1.5.9
+    profiles:
+      - infrastructure
+    ports:
+      - "127.0.0.1:${CHROMA_PORT}:8000"
+    volumes:
+      - chroma_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000; printf \"GET /api/v2/heartbeat HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q heartbeat <&3'",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 20
+
   ai-engine:
     build:
       context: .
@@ -96,3 +115,4 @@ volumes:
   postgres_data:
   redis_data:
   kafka_data:
+  chroma_data:

@@ -8,3 +8,6 @@ services:
 
   kafka:
     ports: !reset []
+
+  chroma:
+    ports: !reset []

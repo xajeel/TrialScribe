@@ -16,8 +16,10 @@ def test_migration_history_is_linear_with_one_head() -> None:
     scripts = migration_scripts()
     revisions = list(scripts.walk_revisions(base="base", head="heads"))
 
-    assert scripts.get_heads() == ["0011_event_outbox"]
+    assert scripts.get_heads() == ["0013_evidence_chunks"]
     assert [revision.revision for revision in revisions] == [
+        "0013_evidence_chunks",
+        "0012_provider_calls",
         "0011_event_outbox",
         "0010_jobs",
         "0009_processed_events",
@@ -52,6 +54,8 @@ def test_revision_files_stay_in_versions_directory() -> None:
         "0009_create_processed_events_table.py",
         "0010_create_jobs_table.py",
         "0011_create_event_outbox_table.py",
+        "0012_create_provider_calls_table.py",
+        "0013_create_evidence_chunks_table.py",
     ]
 
 
