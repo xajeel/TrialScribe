@@ -115,6 +115,7 @@ class ProbeNames:
     postgres_table: str
     redis_key: str
     kafka_topic: str
+    chroma_collection: str
 
     @classmethod
     def create(cls) -> ProbeNames:
@@ -124,6 +125,7 @@ class ProbeNames:
             postgres_table=f"probe_{token}",
             redis_key=f"trialscribe:runtime-probe:{token}",
             kafka_topic=f"trialscribe-runtime-probe-{token}",
+            chroma_collection=f"probe_{token}",
         )
 
 
@@ -265,8 +267,163 @@ def cleanup_kafka(project: ComposeProject, probe: ProbeNames) -> None:
     )
 
 
+CHROMA_TENANT = "default_tenant"
+CHROMA_DATABASE = "default_database"
+CHROMA_COLLECTIONS_PATH = (
+    f"/api/v2/tenants/{CHROMA_TENANT}/databases/{CHROMA_DATABASE}/collections"
+)
+
+
+CHROMA_HTTP_SCRIPT = r"""
+set -euo pipefail
+method="$1"
+path="$2"
+body="${3-}"
+exec 3<>/dev/tcp/127.0.0.1/8000
+if [ -n "$body" ]; then
+  printf '%s %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %s\r\nConnection: close\r\n\r\n%s' \
+    "$method" "$path" "${#body}" "$body" >&3
+else
+  printf '%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+    "$method" "$path" >&3
+fi
+response=$(cat <&3 || true)
+status=$(printf '%s\n' "$response" | head -n 1)
+case "$status" in
+  *[[:space:]]2*) ;;
+  *) printf '%s\n' "$status" >&2; exit 1 ;;
+esac
+body_text=${response#*$'\r\n\r\n'}
+printf '%s' "$body_text"
+"""
+
+
+def chroma_http(
+    project: ComposeProject,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None = None,
+) -> str:
+    body = json.dumps(payload) if payload is not None else ""
+    return project.exec(
+        "chroma",
+        "bash",
+        "-c",
+        CHROMA_HTTP_SCRIPT,
+        "chroma-http",
+        method,
+        path,
+        body,
+    )
+
+
+def chroma_json(
+    project: ComposeProject,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None = None,
+) -> object:
+    output = chroma_http(project, method, path, payload)
+    if not output:
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as error:
+        raise InfrastructureFailure("Chroma returned invalid JSON") from error
+
+
+def chroma_collections(payload: object) -> list[dict[str, object]]:
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("collections"), list):
+        items = payload["collections"]
+    else:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def chroma_collection_id(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise InfrastructureFailure("Chroma collection response was not an object")
+    collection_id = payload.get("id") or payload.get("uuid")
+    if not isinstance(collection_id, str) or not collection_id:
+        raise InfrastructureFailure("Chroma collection response omitted id")
+    return collection_id
+
+
+def prepare_chroma(project: ComposeProject, probe: ProbeNames) -> None:
+    heartbeat = chroma_json(project, "GET", "/api/v2/heartbeat")
+    if not isinstance(heartbeat, dict) or not heartbeat:
+        raise InfrastructureFailure("Chroma heartbeat did not return a payload")
+    created = chroma_json(
+        project,
+        "POST",
+        CHROMA_COLLECTIONS_PATH,
+        {"name": probe.chroma_collection},
+    )
+    collection_id = chroma_collection_id(created)
+    chroma_json(
+        project,
+        "POST",
+        f"{CHROMA_COLLECTIONS_PATH}/{collection_id}/add",
+        {
+            "ids": [probe.token],
+            "embeddings": [[1.0, 0.0, 0.0]],
+            "documents": [probe.token],
+            "metadatas": [{"token": probe.token}],
+        },
+    )
+
+
+def verify_chroma(project: ComposeProject, probe: ProbeNames) -> None:
+    collections = chroma_collections(chroma_json(project, "GET", CHROMA_COLLECTIONS_PATH))
+    collection_id = None
+    for collection in collections:
+        if collection.get("name") == probe.chroma_collection:
+            collection_id = chroma_collection_id(collection)
+            break
+    if collection_id is None:
+        raise InfrastructureFailure("Chroma probe collection was not found")
+    result = chroma_json(
+        project,
+        "POST",
+        f"{CHROMA_COLLECTIONS_PATH}/{collection_id}/query",
+        {
+            "query_embeddings": [[1.0, 0.0, 0.0]],
+            "n_results": 1,
+            "include": ["documents", "metadatas"],
+        },
+    )
+    encoded = json.dumps(result)
+    if probe.token not in encoded:
+        raise InfrastructureFailure("Chroma read/write probe mismatch")
+
+
+def cleanup_chroma(project: ComposeProject, probe: ProbeNames) -> None:
+    collections = chroma_collections(chroma_json(project, "GET", CHROMA_COLLECTIONS_PATH))
+    for collection in collections:
+        if collection.get("name") == probe.chroma_collection:
+            collection_id = chroma_collection_id(collection)
+            chroma_http(
+                project,
+                "DELETE",
+                f"{CHROMA_COLLECTIONS_PATH}/{collection_id}",
+            )
+
+
+def chroma_probe_collections(project: ComposeProject) -> tuple[str, ...]:
+    collections = chroma_collections(chroma_json(project, "GET", CHROMA_COLLECTIONS_PATH))
+    names = sorted(
+        str(collection["name"])
+        for collection in collections
+        if isinstance(collection.get("name"), str)
+        and str(collection["name"]).startswith("probe_")
+    )
+    return tuple(names)
+
+
 def best_effort_cleanup(project: ComposeProject, probe: ProbeNames) -> None:
-    for cleanup in (cleanup_postgres, cleanup_redis, cleanup_kafka):
+    for cleanup in (cleanup_postgres, cleanup_redis, cleanup_kafka, cleanup_chroma):
         try:
             cleanup(project, probe)
         except InfrastructureFailure:
@@ -300,6 +457,10 @@ def find_probe_artifacts(project: ComposeProject) -> tuple[str, ...]:
     )
     if probe_topics:
         artifacts.append(f"Kafka probe topics: {', '.join(probe_topics)}")
+
+    chroma_collections = chroma_probe_collections(project)
+    if chroma_collections:
+        artifacts.append(f"Chroma probe collections: {', '.join(chroma_collections)}")
     return tuple(artifacts)
 
 
@@ -329,7 +490,7 @@ def assert_no_published_ports(project: ComposeProject) -> None:
         raise InfrastructureFailure("Docker Compose returned an invalid config") from error
 
     published_services: list[str] = []
-    for service_name in ("postgres", "redis", "kafka"):
+    for service_name in ("postgres", "redis", "kafka", "chroma"):
         service = services.get(service_name)
         if not isinstance(service, dict):
             raise InfrastructureFailure(
@@ -357,6 +518,7 @@ def wait_for_healthy(project: ComposeProject) -> None:
         "postgres",
         "redis",
         "kafka",
+        "chroma",
         timeout=RESTART_TIMEOUT_SECONDS,
     )
 
@@ -367,21 +529,33 @@ def run_checks(project: ComposeProject, *, verify_restart: bool) -> None:
         prepare_postgres(project, probe)
         prepare_redis(project, probe)
         prepare_kafka(project, probe)
+        prepare_chroma(project, probe)
         verify_postgres(project, probe)
         verify_redis(project, probe)
         verify_kafka(project, probe)
+        verify_chroma(project, probe)
 
         if verify_restart:
-            project.run("restart", "postgres", "redis", "kafka", timeout=RESTART_TIMEOUT_SECONDS)
+            project.run(
+                "restart",
+                "postgres",
+                "redis",
+                "kafka",
+                "chroma",
+                timeout=RESTART_TIMEOUT_SECONDS,
+            )
             wait_for_healthy(project)
             verify_postgres(project, probe)
             verify_redis(project, probe)
             verify_kafka(project, probe)
+            verify_chroma(project, probe)
 
         print("healthy postgres read/write")
         print("healthy pgvector distance")
         print("healthy redis read/write")
         print("healthy kafka produce/consume")
+        print("healthy chroma heartbeat")
+        print("healthy chroma read/write")
     finally:
         best_effort_cleanup(project, probe)
     assert_cleanup(project)

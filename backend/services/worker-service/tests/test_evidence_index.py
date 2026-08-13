@@ -1,0 +1,256 @@
+import asyncio
+from typing import Any
+from uuid import UUID, uuid4
+
+from sqlalchemy.dialects import postgresql
+
+from trialscribe_worker.models.evidence_chunk import EvidenceChunk
+from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
+from trialscribe_worker.retrieval.chroma_index import (
+    ChromaIndex,
+    EvidenceIndex,
+    collection_name,
+)
+from trialscribe_worker.utils.constant import (
+    DEFAULT_EMBEDDING_DIMENSIONS,
+    DEFAULT_EMBEDDING_MODEL,
+    EVIDENCE_ORGANIZATION_CONVERSATION_INDEX,
+    EVIDENCE_SOURCE_PROBE,
+)
+from trialscribe_worker.utils.exceptions import ProviderConfigError
+
+ORGANIZATION_A = UUID("00000000-0000-4000-8000-000000000501")
+ORGANIZATION_B = UUID("00000000-0000-4000-8000-000000000502")
+CONVERSATION_A = UUID("00000000-0000-4000-8000-000000000503")
+CONVERSATION_B = UUID("00000000-0000-4000-8000-000000000504")
+PROBE_VECTOR = [0.1] * DEFAULT_EMBEDDING_DIMENSIONS
+
+
+class MemoryChunks:
+    def __init__(self) -> None:
+        self.rows: dict[UUID, EvidenceChunk] = {}
+
+    async def add(self, chunk: EvidenceChunk) -> EvidenceChunk:
+        self.rows[chunk.id] = chunk
+        return chunk
+
+    async def get_scoped(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        ids: list[UUID],
+    ) -> list[EvidenceChunk]:
+        matched: list[EvidenceChunk] = []
+        for chunk_id in ids:
+            row = self.rows.get(chunk_id)
+            if (
+                row is not None
+                and row.organization_id == organization_id
+                and row.conversation_id == conversation_id
+            ):
+                matched.append(row)
+        return matched
+
+
+class MemoryCollection:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.records: dict[str, tuple[list[float], dict[str, str]]] = {}
+        self.last_where: dict[str, object] | None = None
+        self.forced_ids: list[str] | None = None
+
+    async def upsert(
+        self,
+        ids: list[str],
+        embeddings: list[list[float]],
+        metadatas: list[dict[str, str]],
+    ) -> None:
+        for chunk_id, vector, metadata in zip(ids, embeddings, metadatas, strict=True):
+            self.records[chunk_id] = (vector, metadata)
+
+    async def query(
+        self,
+        query_embeddings: list[list[float]],
+        n_results: int,
+        where: dict[str, object],
+    ) -> dict[str, list[list[str]]]:
+        del query_embeddings
+        self.last_where = where
+        if self.forced_ids is not None:
+            return {"ids": [self.forced_ids[:n_results]]}
+        organization_id, conversation_id = _where_ids(where)
+        matched = [
+            chunk_id
+            for chunk_id, (_vector, metadata) in self.records.items()
+            if metadata.get("organization_id") == organization_id
+            and metadata.get("conversation_id") == conversation_id
+        ]
+        return {"ids": [matched[:n_results]]}
+
+    async def delete(self, ids: list[str]) -> None:
+        for chunk_id in ids:
+            self.records.pop(chunk_id, None)
+
+
+class MemoryChroma:
+    def __init__(self) -> None:
+        self.collections: dict[str, MemoryCollection] = {}
+
+    async def get_or_create_collection(self, name: str) -> MemoryCollection:
+        if name not in self.collections:
+            self.collections[name] = MemoryCollection(name)
+        return self.collections[name]
+
+
+def _where_ids(where: dict[str, object]) -> tuple[str, str]:
+    clauses = where["$and"]
+    assert isinstance(clauses, list)
+    organization = clauses[0]["organization_id"]["$eq"]
+    conversation = clauses[1]["conversation_id"]["$eq"]
+    return str(organization), str(conversation)
+
+
+class RecordingSession:
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    async def execute(self, statement: Any) -> Any:
+        self.statements.append(statement)
+        raise _Captured
+
+
+class _Captured(Exception):
+    pass
+
+
+def compiled(statement: Any) -> str:
+    return str(statement.compile(dialect=postgresql.dialect()))
+
+
+def make_index(client: MemoryChroma | None = None) -> tuple[EvidenceIndex, MemoryChroma]:
+    chroma_client = client or MemoryChroma()
+    index = EvidenceIndex(
+        MemoryChunks(),  # type: ignore[arg-type]
+        ChromaIndex(chroma_client, embed_query=None),
+    )
+    return index, chroma_client
+
+
+async def put_chunk(
+    index: EvidenceIndex,
+    *,
+    organization_id: UUID,
+    conversation_id: UUID,
+    text: str,
+) -> EvidenceChunk:
+    return await index.put(
+        organization_id=organization_id,
+        conversation_id=conversation_id,
+        text=text,
+        vector=PROBE_VECTOR,
+        source_kind=EVIDENCE_SOURCE_PROBE,
+        source_identity="provider_probe",
+        start_char=0,
+        end_char=len(text),
+        embedding_model=DEFAULT_EMBEDDING_MODEL,
+        embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
+    )
+
+
+def test_collection_name_is_c_plus_conversation_hex() -> None:
+    assert collection_name(CONVERSATION_A) == f"c{CONVERSATION_A.hex}"
+
+
+def test_put_uses_the_conversation_collection() -> None:
+    index, client = make_index()
+    asyncio.run(
+        put_chunk(
+            index,
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            text="alpha",
+        )
+    )
+    assert list(client.collections) == [collection_name(CONVERSATION_A)]
+
+
+def test_search_drops_ids_that_do_not_hydrate_in_scope() -> None:
+    index, client = make_index()
+    chunk_a = asyncio.run(
+        put_chunk(
+            index,
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            text="alpha",
+        )
+    )
+    chunk_b = asyncio.run(
+        put_chunk(
+            index,
+            organization_id=ORGANIZATION_B,
+            conversation_id=CONVERSATION_B,
+            text="beta",
+        )
+    )
+    leaked = client.collections[collection_name(CONVERSATION_A)]
+    leaked.forced_ids = [str(chunk_a.id), str(chunk_b.id)]
+
+    found = asyncio.run(
+        index.search(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            vector=PROBE_VECTOR,
+            k=5,
+        )
+    )
+
+    assert [chunk.id for chunk in found] == [chunk_a.id]
+    assert leaked.last_where is not None
+    organization, conversation = _where_ids(leaked.last_where)
+    assert organization == str(ORGANIZATION_A)
+    assert conversation == str(CONVERSATION_A)
+
+
+def test_search_without_organization_id_is_a_config_error() -> None:
+    index, _client = make_index()
+    try:
+        asyncio.run(
+            index.search(
+                organization_id=None,
+                conversation_id=CONVERSATION_A,
+                vector=PROBE_VECTOR,
+                k=1,
+            )
+        )
+    except ProviderConfigError:
+        return
+    raise AssertionError("search without organization_id must raise ProviderConfigError")
+
+
+def test_the_model_declares_no_foreign_key_it_cannot_resolve() -> None:
+    declared = [
+        column.name for column in EvidenceChunk.__table__.columns if column.foreign_keys
+    ]
+    assert declared == []
+    indexes = {index.name: index for index in EvidenceChunk.__table__.indexes}
+    listing = indexes[EVIDENCE_ORGANIZATION_CONVERSATION_INDEX]
+    assert [column.name for column in listing.columns] == [
+        "organization_id",
+        "conversation_id",
+        "id",
+    ]
+
+
+def test_get_scoped_sql_names_both_tenant_columns() -> None:
+    session = RecordingSession()
+    repository = EvidenceChunkRepository(session)  # type: ignore[arg-type]
+    try:
+        asyncio.run(
+            repository.get_scoped(ORGANIZATION_A, CONVERSATION_A, [uuid4()])
+        )
+    except _Captured:
+        pass
+    sql = compiled(session.statements[0])
+    assert "organization_id" in sql
+    assert "conversation_id" in sql
+    assert "evidence_chunks" in sql

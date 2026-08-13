@@ -2,9 +2,13 @@
 name = "trialscribe-worker"
 version = "0.1.0"
 description = "TrialScribe worker service"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
+    "chromadb==1.5.9",
     "fastapi[standard]>=0.115.14,<0.116",
+    "fastembed==0.8.0",
+    "httpx==0.28.1",
+    "openai==1.109.1",
     "pydantic-settings==2.14.2",
     "redis==8.0.1",
     "trialscribe-database",

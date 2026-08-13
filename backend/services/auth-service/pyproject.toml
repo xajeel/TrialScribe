@@ -2,7 +2,7 @@
 name = "trialscribe-auth"
 version = "0.1.0"
 description = "TrialScribe authentication service"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "email-validator==2.3.0",
     "fastapi[standard]>=0.115.14,<0.116",

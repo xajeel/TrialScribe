@@ -31,3 +31,23 @@ class ProbeFaultInjected(WorkerServiceError):
 
 class JobAttemptFailedError(WorkerServiceError):
     """One attempt failed while more remain, so the record must be redelivered."""
+
+
+class ProviderTimeoutError(WorkerServiceError):
+    """A provider call did not finish before its configured deadline."""
+
+
+class ProviderRateLimitedError(WorkerServiceError):
+    """A provider refused the call because too many are already in flight."""
+
+
+class ProviderUnavailableError(WorkerServiceError):
+    """A provider was down, overloaded, or returned a retryable server error."""
+
+
+class ProviderCircuitOpenError(WorkerServiceError):
+    """The circuit breaker is open, so the provider is not called."""
+
+
+class ProviderConfigError(WorkerServiceError):
+    """The provider, model, or pricing configuration cannot be used."""
