@@ -400,15 +400,12 @@ def verify_chroma(project: ComposeProject, probe: ProbeNames) -> None:
 
 
 def cleanup_chroma(project: ComposeProject, probe: ProbeNames) -> None:
-    collections = chroma_collections(chroma_json(project, "GET", CHROMA_COLLECTIONS_PATH))
-    for collection in collections:
-        if collection.get("name") == probe.chroma_collection:
-            collection_id = chroma_collection_id(collection)
-            chroma_http(
-                project,
-                "DELETE",
-                f"{CHROMA_COLLECTIONS_PATH}/{collection_id}",
-            )
+    # Chroma 1.5.9 binds DELETE to collection_name, not the collection UUID.
+    chroma_http(
+        project,
+        "DELETE",
+        f"{CHROMA_COLLECTIONS_PATH}/{probe.chroma_collection}",
+    )
 
 
 def chroma_probe_collections(project: ComposeProject) -> tuple[str, ...]:
