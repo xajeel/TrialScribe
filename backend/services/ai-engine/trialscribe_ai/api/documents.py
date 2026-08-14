@@ -9,6 +9,9 @@ from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_db.runtime import DatabaseRuntime
+from trialscribe_events.contracts.document import register_document_events
+from trialscribe_events.registry import EventRegistry
+from trialscribe_events.repositories.outbox import OutboxRepository
 
 from trialscribe_ai.api.dependencies import (
     get_current_account_id,
@@ -16,7 +19,7 @@ from trialscribe_ai.api.dependencies import (
     get_database_runtime,
     get_now,
 )
-from trialscribe_ai.config.settings import DOCUMENT_MAX_SIZE_BYTES
+from trialscribe_ai.config.settings import DOCUMENT_MAX_SIZE_BYTES, EVENTS_TOPIC_PREFIX
 from trialscribe_ai.repositories.conversations import ConversationRepository
 from trialscribe_ai.repositories.documents import DocumentRepository
 from trialscribe_ai.schemas.document import (
@@ -24,6 +27,7 @@ from trialscribe_ai.schemas.document import (
     DocumentPageResponse,
     DocumentResponse,
 )
+from trialscribe_ai.services.document_events import DocumentEventPublisher
 from trialscribe_ai.services.documents import DocumentService
 from trialscribe_ai.utils.enum import DocumentKind
 
@@ -42,6 +46,11 @@ def _service(runtime_session: AsyncSession) -> DocumentService:
     return DocumentService(
         ConversationRepository(runtime_session),
         DocumentRepository(runtime_session),
+        DocumentEventPublisher(
+            OutboxRepository(runtime_session),
+            register_document_events(EventRegistry()),
+            EVENTS_TOPIC_PREFIX,
+        ),
     )
 
 
@@ -161,6 +170,7 @@ async def delete_document(
     account_id: AccountId,
     organization_id: OrganizationId,
     runtime: Runtime,
+    now: Now,
 ) -> None:
     async with runtime.transaction() as session:
         await _service(session).delete(
@@ -168,4 +178,5 @@ async def delete_document(
             account_id,
             conversation_id,
             document_id,
+            now,
         )

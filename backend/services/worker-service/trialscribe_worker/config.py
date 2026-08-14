@@ -1,17 +1,20 @@
 """Environment-backed worker-service configuration."""
 
-from typing import Any
+from typing import Any, Self
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trialscribe_worker.utils.constant import (
     DEFAULT_CHAT_MODEL,
     DEFAULT_CHAT_PROVIDER,
+    DEFAULT_CHUNK_OVERLAP_CHARS,
+    DEFAULT_CHUNK_SIZE_CHARS,
     DEFAULT_CHROMA_URL,
     DEFAULT_CIRCUIT_FAILURE_THRESHOLD,
     DEFAULT_CIRCUIT_OPEN_SECONDS,
     DEFAULT_DEEPSEEK_BASE_URL,
+    DEFAULT_EMBED_BATCH_SIZE,
     DEFAULT_EMBEDDING_DIMENSIONS,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EMBEDDING_PROVIDER,
@@ -20,6 +23,7 @@ from trialscribe_worker.utils.constant import (
     DEFAULT_PROVIDER_RETRY_BASE_SECONDS,
     DEFAULT_PROVIDER_RETRY_MAX_SECONDS,
     DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+    DEFAULT_RETRIEVE_K,
     MAX_PROGRESS,
     MIN_PROGRESS,
     PRICING_VERSION_DEFAULT,
@@ -74,6 +78,10 @@ class WorkerSettings(BaseSettings):
     )
     circuit_open_seconds: float = Field(default=DEFAULT_CIRCUIT_OPEN_SECONDS, gt=0)
     pricing_version: str = Field(default=PRICING_VERSION_DEFAULT, min_length=1)
+    chunk_size_chars: int = Field(default=DEFAULT_CHUNK_SIZE_CHARS, ge=1)
+    chunk_overlap_chars: int = Field(default=DEFAULT_CHUNK_OVERLAP_CHARS, ge=0)
+    embed_batch_size: int = Field(default=DEFAULT_EMBED_BATCH_SIZE, ge=1)
+    retrieve_k: int = Field(default=DEFAULT_RETRIEVE_K, ge=1)
 
     @field_validator("supervisor_restart_cap_seconds")
     @classmethod
@@ -84,6 +92,14 @@ class WorkerSettings(BaseSettings):
                 "WORKER_SUPERVISOR_RESTART_CAP_SECONDS must not be below the base delay"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_chunk_overlap(self) -> Self:
+        if self.chunk_overlap_chars >= self.chunk_size_chars:
+            raise ValueError(
+                "WORKER_CHUNK_OVERLAP_CHARS must be smaller than WORKER_CHUNK_SIZE_CHARS"
+            )
+        return self
 
 
 class WorkerRedisSettings(BaseSettings):

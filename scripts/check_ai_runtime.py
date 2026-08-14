@@ -14,7 +14,10 @@ from urllib.parse import quote
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "backend"
-INTEGRATION_TESTS = ("services/worker-service/tests/test_ai_runtime_integration.py",)
+INTEGRATION_TESTS = (
+    "services/worker-service/tests/test_ai_runtime_integration.py",
+    "services/worker-service/tests/test_rag_integration.py",
+)
 COORDINATOR_PROBE_GROUP = "trialscribe-ai-runtime-coordinator-readiness"
 COORDINATOR_ATTEMPTS = 30
 COORDINATOR_RETRY_SECONDS = 2.0
@@ -237,7 +240,10 @@ def main() -> int:
     except AIRuntimeCheckFailure as failure:
         print(str(failure), file=sys.stderr)
         return 1
-    print("healthy ai runtime provider probe, metering, isolation, and chroma durability")
+    print(
+        "healthy ai runtime provider probe, metering, isolation, chroma durability, "
+        "and fixture retrieval"
+    )
     return 0
 
 

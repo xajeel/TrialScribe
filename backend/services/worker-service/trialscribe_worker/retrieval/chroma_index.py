@@ -64,6 +64,18 @@ def tenant_where(organization_id: UUID, conversation_id: UUID) -> dict[str, obje
     }
 
 
+async def _collection_size(collection: object) -> int | None:
+    """Return how many vectors a collection holds, when the client can say."""
+
+    count = getattr(collection, "count", None)
+    if not callable(count):
+        return None
+    value = count()
+    if hasattr(value, "__await__"):
+        value = await value
+    return int(value)
+
+
 def _ids_from_query(result: object) -> list[str]:
     raw = result["ids"] if isinstance(result, dict) else getattr(result, "ids", None)
     if not raw:
@@ -122,9 +134,12 @@ class ChromaIndex:
         collection = await self._client.get_or_create_collection(
             collection_name(conversation_id)
         )
+        counted = await _collection_size(collection)
+        if counted == 0:
+            return []
         result = await collection.query(
             query_embeddings=[vector],
-            n_results=k,
+            n_results=min(k, counted) if counted is not None else k,
             where=tenant_where(organization_id, conversation_id),
         )
         found: list[UUID] = []
@@ -134,6 +149,25 @@ class ChromaIndex:
             except ValueError:
                 continue
         return found
+
+    async def delete(
+        self,
+        organization_id: UUID | None,
+        conversation_id: UUID | None,
+        ids: list[UUID],
+    ) -> None:
+        """Remove vectors by id from the conversation collection."""
+
+        organization_id, conversation_id = require_scope(
+            organization_id,
+            conversation_id,
+        )
+        if not ids:
+            return
+        collection = await self._client.get_or_create_collection(
+            collection_name(conversation_id)
+        )
+        await collection.delete(ids=[str(chunk_id) for chunk_id in ids])
 
 
 class EvidenceIndex:
@@ -202,3 +236,32 @@ class EvidenceIndex:
         )
         ids = await self._chroma.query(organization_id, conversation_id, vector, k)
         return await self._chunks.get_scoped(organization_id, conversation_id, ids)
+
+    async def drop_source(
+        self,
+        *,
+        organization_id: UUID | None,
+        conversation_id: UUID | None,
+        source_kind: str,
+        source_identity: str,
+    ) -> None:
+        """Remove one source's passages from PostgreSQL and Chroma."""
+
+        organization_id, conversation_id = require_scope(
+            organization_id,
+            conversation_id,
+        )
+        ids = await self._chunks.list_ids_for_source(
+            organization_id,
+            conversation_id,
+            source_kind,
+            source_identity,
+        )
+        if ids:
+            await self._chroma.delete(organization_id, conversation_id, ids)
+        await self._chunks.delete_for_source(
+            organization_id,
+            conversation_id,
+            source_kind,
+            source_identity,
+        )

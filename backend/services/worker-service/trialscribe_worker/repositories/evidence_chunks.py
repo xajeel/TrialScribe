@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_worker.models.evidence_chunk import EvidenceChunk
@@ -43,3 +43,37 @@ class EvidenceChunkRepository:
         rows = list((await self._session.execute(statement)).scalars().all())
         by_id = {row.id: row for row in rows}
         return [by_id[chunk_id] for chunk_id in ids if chunk_id in by_id]
+
+    async def list_ids_for_source(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        source_kind: str,
+        source_identity: str,
+    ) -> list[UUID]:
+        """Return chunk ids that belong to one source inside this tenant."""
+
+        statement = select(EvidenceChunk.id).where(
+            EvidenceChunk.organization_id == organization_id,
+            EvidenceChunk.conversation_id == conversation_id,
+            EvidenceChunk.source_kind == source_kind,
+            EvidenceChunk.source_identity == source_identity,
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def delete_for_source(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        source_kind: str,
+        source_identity: str,
+    ) -> None:
+        """Remove every passage for one source inside this tenant."""
+
+        statement = delete(EvidenceChunk).where(
+            EvidenceChunk.organization_id == organization_id,
+            EvidenceChunk.conversation_id == conversation_id,
+            EvidenceChunk.source_kind == source_kind,
+            EvidenceChunk.source_identity == source_identity,
+        )
+        await self._session.execute(statement)

@@ -9,6 +9,7 @@ dependencies = [
     "fastembed==0.8.0",
     "httpx==0.28.1",
     "openai==1.109.1",
+    "pypdf==6.15.0",
     "pydantic-settings==2.14.2",
     "redis==8.0.1",
     "trialscribe-database",

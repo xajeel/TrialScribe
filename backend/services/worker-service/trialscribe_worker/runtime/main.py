@@ -8,31 +8,48 @@ from urllib.parse import urlparse
 import chromadb
 from redis.asyncio import Redis
 
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from trialscribe_db.config import DatabaseSettings
 from trialscribe_db.runtime import create_database_runtime
 from trialscribe_events.config import EventBusSettings
 from trialscribe_events.consumer import EventConsumer
+from trialscribe_events.contracts.document import register_document_events
 from trialscribe_events.contracts.job import register_job_events
+from trialscribe_events.envelope import EventEnvelope
 from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.publisher import create_event_publisher
 from trialscribe_events.registry import EventRegistry
+from trialscribe_events.repositories.outbox import OutboxRepository
 from trialscribe_events.topics import ensure_topics
 from trialscribe_events.utils.constant import (
+    DOCUMENT_DELETED_EVENT_TYPE,
+    DOCUMENT_EVENT_VERSION,
+    DOCUMENT_UPLOADED_EVENT_TYPE,
     JOB_EVENT_VERSION,
     JOB_REQUESTED_EVENT_TYPE,
 )
 
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSecretSettings, WorkerSettings
+from trialscribe_worker.pipelines.document_events import (
+    handle_document_deleted,
+    handle_document_uploaded,
+)
+from trialscribe_worker.pipelines.index_document import index_document_pipeline
 from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
 from trialscribe_worker.providers.factory import build_providers
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
 from trialscribe_worker.repositories.job_progress import JobProgressStore
+from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import PostgresUsageRecorder
+from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.runtime.supervisor import ConsumerSupervisor
 from trialscribe_worker.services.job_runner import JobContext, JobRunner
+from trialscribe_worker.services.jobs import JobService
 from trialscribe_worker.utils.enum import JobKind, ProviderName
 
 
@@ -55,7 +72,7 @@ async def run_worker(stop: asyncio.Event) -> None:
     worker_settings = WorkerSettings()
     secrets = WorkerSecretSettings()
     event_settings = EventBusSettings(consumer_group=worker_settings.consumer_group)
-    registry = register_job_events(EventRegistry())
+    registry = register_document_events(register_job_events(EventRegistry()))
 
     runtime = create_database_runtime(DatabaseSettings())
     redis = Redis.from_url(WorkerRedisSettings().connection_url(), decode_responses=False)
@@ -73,6 +90,8 @@ async def run_worker(stop: asyncio.Event) -> None:
     chroma = await chromadb.AsyncHttpClient(host=host, port=port, ssl=ssl)
     chroma_index = ChromaIndex(chroma, embed_query=None)
 
+    progress = JobProgressStore(redis, worker_settings.progress_ttl_seconds)
+
     async def run_provider_probe(context: JobContext) -> None:
         context.gateway = gateway
         async with runtime.transaction() as session:
@@ -82,23 +101,78 @@ async def run_worker(stop: asyncio.Event) -> None:
             )
             await provider_probe_pipeline(context)
 
+    async def run_index_document(context: JobContext) -> None:
+        context.gateway = gateway
+        async with runtime.transaction() as session:
+            context.evidence = EvidenceIndex(
+                EvidenceChunkRepository(session),
+                chroma_index,
+            )
+            context.sources = SourceDocumentRepository(session)
+            await index_document_pipeline(context)
+
     runner = JobRunner(
         runtime,
-        JobProgressStore(redis, worker_settings.progress_ttl_seconds),
+        progress,
         worker_settings,
         event_settings,
         {
             JobKind.PROBE: probe_pipeline,
             JobKind.PROVIDER_PROBE: run_provider_probe,
+            JobKind.INDEX_DOCUMENT: run_index_document,
         },
     )
 
     def build_consumer() -> EventConsumer:
         consumer = EventConsumer(event_settings, registry, runtime, publisher)
+
+        async def on_document_uploaded(
+            envelope: EventEnvelope,
+            payload: BaseModel,
+            session: AsyncSession,
+        ) -> None:
+            await handle_document_uploaded(
+                envelope,
+                payload,
+                session,
+                jobs=JobService(
+                    JobRepository(session),
+                    progress,
+                    OutboxRepository(session),
+                    registry,
+                    event_settings.topic_prefix,
+                ),
+            )
+
+        async def on_document_deleted(
+            envelope: EventEnvelope,
+            payload: BaseModel,
+            session: AsyncSession,
+        ) -> None:
+            await handle_document_deleted(
+                envelope,
+                payload,
+                session,
+                evidence=EvidenceIndex(
+                    EvidenceChunkRepository(session),
+                    chroma_index,
+                ),
+            )
+
         consumer.register_handler(
             JOB_REQUESTED_EVENT_TYPE,
             JOB_EVENT_VERSION,
             runner.handle,
+        )
+        consumer.register_handler(
+            DOCUMENT_UPLOADED_EVENT_TYPE,
+            DOCUMENT_EVENT_VERSION,
+            on_document_uploaded,
+        )
+        consumer.register_handler(
+            DOCUMENT_DELETED_EVENT_TYPE,
+            DOCUMENT_EVENT_VERSION,
+            on_document_deleted,
         )
         return consumer
 

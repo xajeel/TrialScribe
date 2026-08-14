@@ -16,12 +16,13 @@ dependencies = [
     "langgraph-supervisor>=0.0.23,<0.1",
     "openai>=1.79.0,<2",
     "pdfplumber>=0.11.6,<0.12",
-    "pypdf>=5.5.0,<6",
+    "pypdf==6.15.0",
     "pypdf2>=3.0.1,<4",
     "python-dotenv>=1.1.0,<2",
     "requests>=2.32.3,<3",
     "tiktoken>=0.9.0,<0.10",
     "trialscribe-database",
+    "trialscribe-events",
     "unstructured>=0.17.2,<0.18",
 ]
 

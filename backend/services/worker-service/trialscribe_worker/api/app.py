@@ -11,6 +11,7 @@ from sqlalchemy import text
 from trialscribe_db.config import DatabaseSettings
 from trialscribe_db.runtime import create_database_runtime
 from trialscribe_events.config import EventBusSettings
+from trialscribe_events.contracts.document import register_document_events
 from trialscribe_events.contracts.job import register_job_events
 from trialscribe_events.publisher import create_event_publisher
 from trialscribe_events.registry import EventRegistry
@@ -45,7 +46,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     worker_settings = WorkerSettings()
     event_settings = EventBusSettings(consumer_group=worker_settings.consumer_group)
-    registry = register_job_events(EventRegistry())
+    registry = register_document_events(register_job_events(EventRegistry()))
     publisher = create_event_publisher(event_settings, registry)
 
     application.state.worker_settings = worker_settings

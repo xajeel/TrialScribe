@@ -20,6 +20,7 @@ from trialscribe_db.config import DatabaseSettings
 from trialscribe_db.runtime import DatabaseRuntime, create_database_runtime
 from trialscribe_events.config import EventBusSettings
 from trialscribe_events.consumer import EventConsumer
+from trialscribe_events.contracts.document import register_document_events
 from trialscribe_events.contracts.job import register_job_events
 from trialscribe_events.outbox_relay import OutboxRelay
 from trialscribe_events.publisher import EventPublisher, create_event_publisher
@@ -32,19 +33,25 @@ from trialscribe_events.utils.constant import (
 )
 
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSettings
-from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
-from trialscribe_worker.providers.fake import FakeChatProvider, FakeEmbeddingProvider, FakeFault
+from trialscribe_worker.pipelines.index_document import index_document_pipeline
+from trialscribe_worker.pipelines.provider_probe import PROBE_CHAT_MESSAGE, provider_probe_pipeline
+from trialscribe_worker.providers.fake import (
+    FakeChatProvider,
+    FakeEmbeddingProvider,
+    FakeFault,
+    fake_vector_for,
+)
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.providers.types import ChatMessage, ChatRequest
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import PostgresUsageRecorder
+from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.schemas.job import JobCreateRequest
 from trialscribe_worker.services.job_runner import JobContext, JobRunner
 from trialscribe_worker.services.jobs import JobService
-from trialscribe_worker.utils.constant import DEFAULT_EMBEDDING_DIMENSIONS
 from trialscribe_worker.utils.enum import JobKind, JobStatus, ProviderOutcome
 from trialscribe_worker.utils.exceptions import (
     JobAttemptFailedError,
@@ -209,7 +216,7 @@ class Backbone:
             chat_provider="fake",
             embedding_provider="fake",
         )
-        self.registry = register_job_events(EventRegistry())
+        self.registry = register_document_events(register_job_events(EventRegistry()))
         self.runtime: DatabaseRuntime
         self.redis: Redis
         self.publisher: EventPublisher
@@ -253,12 +260,25 @@ class Backbone:
                 )
                 await provider_probe_pipeline(context)
 
+        async def run_index_document(context: JobContext) -> None:
+            context.gateway = self.gateway
+            async with self.runtime.transaction() as session:
+                context.evidence = EvidenceIndex(
+                    EvidenceChunkRepository(session),
+                    self.chroma_index,
+                )
+                context.sources = SourceDocumentRepository(session)
+                await index_document_pipeline(context)
+
         runner = JobRunner(
             self.runtime,
             self.progress,
             self.worker_settings,
             self.settings,
-            {JobKind.PROVIDER_PROBE: run_provider_probe},
+            {
+                JobKind.PROVIDER_PROBE: run_provider_probe,
+                JobKind.INDEX_DOCUMENT: run_index_document,
+            },
         )
 
         async def handler(envelope: Any, payload: Any, session: Any) -> None:
@@ -388,7 +408,7 @@ async def with_backbone(scenario: Any) -> Any:
 
 
 def _probe_vector() -> list[float]:
-    return [0.001] * DEFAULT_EMBEDDING_DIMENSIONS
+    return fake_vector_for(f"echo:{PROBE_CHAT_MESSAGE}")
 
 
 async def a_provider_probe_is_metered(
