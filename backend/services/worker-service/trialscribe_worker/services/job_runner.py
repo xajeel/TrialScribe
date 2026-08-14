@@ -49,6 +49,7 @@ class JobContext:
     evidence: object | None = None
     sources: object | None = None
     research: object | None = None
+    generate: object | None = None
     max_attempts: int = 1
 
 

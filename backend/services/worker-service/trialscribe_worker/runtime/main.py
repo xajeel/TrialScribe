@@ -37,6 +37,7 @@ from trialscribe_worker.pipelines.document_events import (
     handle_document_deleted,
     handle_document_uploaded,
 )
+from trialscribe_worker.pipelines.generate_sections import run_generate_sections_job
 from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
@@ -126,6 +127,10 @@ async def run_worker(stop: asyncio.Event) -> None:
             )
             await run_research_web_job(context, runtime, chroma_index, pubmed, web)
 
+    async def run_generate_sections(context: JobContext) -> None:
+        context.gateway = gateway
+        await run_generate_sections_job(context, runtime, chroma_index)
+
     runner = JobRunner(
         runtime,
         progress,
@@ -136,6 +141,7 @@ async def run_worker(stop: asyncio.Event) -> None:
             JobKind.PROVIDER_PROBE: run_provider_probe,
             JobKind.INDEX_DOCUMENT: run_index_document,
             JobKind.RESEARCH_WEB: run_research_web,
+            JobKind.GENERATE_SECTIONS: run_generate_sections,
         },
     )
 
