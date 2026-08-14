@@ -55,3 +55,7 @@ class ProviderConfigError(WorkerServiceError):
 
 class DocumentExtractionError(WorkerServiceError):
     """A stored file could not be turned into indexable text."""
+
+
+class ResearchSourceError(WorkerServiceError):
+    """A research library did not answer before its retry budget ran out."""

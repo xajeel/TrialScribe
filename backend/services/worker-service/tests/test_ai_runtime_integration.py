@@ -35,6 +35,7 @@ from trialscribe_events.utils.constant import (
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSettings
 from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.provider_probe import PROBE_CHAT_MESSAGE, provider_probe_pipeline
+from trialscribe_worker.pipelines.research_web import run_research_web_job
 from trialscribe_worker.providers.fake import (
     FakeChatProvider,
     FakeEmbeddingProvider,
@@ -204,6 +205,14 @@ def restart_chroma() -> None:
     wait_for_chroma()
 
 
+class SilentResearch:
+    """A research library that returns no hits and never leaves the process."""
+
+    async def search(self, query: str, *, max_results: int) -> list[Any]:
+        del query, max_results
+        return []
+
+
 class Backbone:
     """One isolated AI-runtime scenario: jobs, gateway, and Chroma."""
 
@@ -224,6 +233,8 @@ class Backbone:
         self.chroma: Any
         self.chroma_index: ChromaIndex
         self.gateway: ProviderGateway
+        self.research_pubmed: Any = SilentResearch()
+        self.research_web: Any = SilentResearch()
         self.handled: list[UUID] = []
 
     async def open(self) -> None:
@@ -263,6 +274,16 @@ class Backbone:
             context.gateway = self.gateway
             await run_index_document_job(context, self.runtime, self.chroma_index)
 
+        async def run_research_web(context: JobContext) -> None:
+            context.gateway = self.gateway
+            await run_research_web_job(
+                context,
+                self.runtime,
+                self.chroma_index,
+                self.research_pubmed,
+                self.research_web,
+            )
+
         runner = JobRunner(
             self.runtime,
             self.progress,
@@ -271,6 +292,7 @@ class Backbone:
             {
                 JobKind.PROVIDER_PROBE: run_provider_probe,
                 JobKind.INDEX_DOCUMENT: run_index_document,
+                JobKind.RESEARCH_WEB: run_research_web,
             },
         )
 
