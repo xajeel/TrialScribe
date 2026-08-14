@@ -97,6 +97,15 @@ EVIDENCE_TEXT_LENGTH_CHECK = "char_length(text) >= 1"
 EVIDENCE_DIMENSIONS_CHECK = "embedding_dimensions > 0"
 EVIDENCE_ORGANIZATION_CONVERSATION_INDEX = "ix_evidence_chunks_organization_conversation_id"
 
+DEFAULT_CHUNK_SIZE_CHARS = 1200
+DEFAULT_CHUNK_OVERLAP_CHARS = 200
+DEFAULT_EMBED_BATCH_SIZE = 32
+DEFAULT_RETRIEVE_K = 8
+INDEX_DOCUMENT_PARAMETER = "document_id"
+INDEX_EXTRACTION_FAILED_ERROR = "document could not be processed"
+INDEX_EMPTY_TEXT_ERROR = "document contained no extractable text"
+INDEX_FAILED_ERROR = "document indexing failed"
+
 PROBE_DEFAULT_STEPS = 4
 PROBE_MAX_STEPS = 100
 PROBE_DEFAULT_STEP_SECONDS = 0.05

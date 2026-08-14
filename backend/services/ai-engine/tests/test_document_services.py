@@ -102,6 +102,20 @@ class FakeDocumentRepository:
         self.items.pop(document.id, None)
 
 
+class FakeEvents:
+    def __init__(self) -> None:
+        self.uploaded: list[Document] = []
+        self.deleted: list[Document] = []
+
+    async def record_uploaded(self, document: Document, now: datetime) -> None:
+        del now
+        self.uploaded.append(document)
+
+    async def record_deleted(self, document: Document, now: datetime) -> None:
+        del now
+        self.deleted.append(document)
+
+
 def make_conversation(*, archived: bool = False) -> Conversation:
     return Conversation(
         id=CONVERSATION_ID,
@@ -117,11 +131,12 @@ def make_conversation(*, archived: bool = False) -> Conversation:
 
 def service_with(
     conversation: Conversation | None,
-) -> tuple[DocumentService, FakeConversationRepository, FakeDocumentRepository]:
+) -> tuple[DocumentService, FakeConversationRepository, FakeDocumentRepository, FakeEvents]:
     conversations = FakeConversationRepository(conversation)
     documents = FakeDocumentRepository()
-    service = DocumentService(conversations, documents)  # type: ignore[arg-type]
-    return service, conversations, documents
+    events = FakeEvents()
+    service = DocumentService(conversations, documents, events)  # type: ignore[arg-type]
+    return service, conversations, documents, events
 
 
 def upload(
@@ -149,7 +164,7 @@ def upload(
 
 
 def test_upload_accepts_trial_json_pdf_and_text() -> None:
-    service, conversations, documents = service_with(make_conversation())
+    service, conversations, documents, events = service_with(make_conversation())
 
     trial = upload(
         service,
@@ -181,10 +196,11 @@ def test_upload_accepts_trial_json_pdf_and_text() -> None:
     assert markdown.content_type == "text/markdown"
     assert conversations.flushed is True
     assert len(documents.items) == 3
+    assert len(events.uploaded) == 3
 
 
 def test_upload_rejects_invalid_content() -> None:
-    service, _, _ = service_with(make_conversation())
+    service, _, _, events = service_with(make_conversation())
 
     with pytest.raises(EmptyDocumentError):
         upload(
@@ -235,9 +251,12 @@ def test_upload_rejects_invalid_content() -> None:
             content=b"not json",
         )
 
+    assert events.uploaded == []
+    assert events.deleted == []
+
 
 def test_upload_requires_accessible_active_conversation() -> None:
-    absent_service, _, _ = service_with(None)
+    absent_service, _, _, absent_events = service_with(None)
     with pytest.raises(ConversationNotFoundError):
         upload(
             absent_service,
@@ -246,8 +265,11 @@ def test_upload_requires_accessible_active_conversation() -> None:
             content_type="application/json",
             content=b"{}",
         )
+    assert absent_events.uploaded == []
 
-    archived_service, _, _ = service_with(make_conversation(archived=True))
+    archived_service, _, _, archived_events = service_with(
+        make_conversation(archived=True)
+    )
     with pytest.raises(ConversationArchivedError):
         upload(
             archived_service,
@@ -256,10 +278,11 @@ def test_upload_requires_accessible_active_conversation() -> None:
             content_type="application/json",
             content=b"{}",
         )
+    assert archived_events.uploaded == []
 
 
 def test_get_and_delete_are_scoped() -> None:
-    service, _, documents = service_with(make_conversation())
+    service, _, documents, events = service_with(make_conversation())
     created = upload(
         service,
         kind=DocumentKind.TRIAL_DATA,
@@ -275,9 +298,12 @@ def test_get_and_delete_are_scoped() -> None:
     with pytest.raises(DocumentNotFoundError):
         asyncio.run(service.get(ORGANIZATION_ID, OWNER_ID, CONVERSATION_ID, uuid4()))
 
-    asyncio.run(service.delete(ORGANIZATION_ID, OWNER_ID, CONVERSATION_ID, created.id))
+    asyncio.run(
+        service.delete(ORGANIZATION_ID, OWNER_ID, CONVERSATION_ID, created.id, NOW)
+    )
     assert documents.items == {}
+    assert [item.id for item in events.deleted] == [created.id]
     with pytest.raises(DocumentNotFoundError):
         asyncio.run(
-            service.delete(ORGANIZATION_ID, OWNER_ID, CONVERSATION_ID, created.id)
+            service.delete(ORGANIZATION_ID, OWNER_ID, CONVERSATION_ID, created.id, NOW)
         )

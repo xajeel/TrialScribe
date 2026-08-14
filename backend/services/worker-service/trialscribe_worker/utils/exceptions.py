@@ -51,3 +51,7 @@ class ProviderCircuitOpenError(WorkerServiceError):
 
 class ProviderConfigError(WorkerServiceError):
     """The provider, model, or pricing configuration cannot be used."""
+
+
+class DocumentExtractionError(WorkerServiceError):
+    """A stored file could not be turned into indexable text."""

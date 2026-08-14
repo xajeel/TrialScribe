@@ -10,6 +10,7 @@ from trialscribe_worker.providers.fake import (
     FakeChatProvider,
     FakeEmbeddingProvider,
     FakeFault,
+    fake_vector_for,
 )
 from trialscribe_worker.providers.types import (
     ChatMessage,
@@ -68,8 +69,9 @@ def test_embeddings_are_deterministic_and_384_wide() -> None:
 
     assert result.dimensions == DEFAULT_EMBEDDING_DIMENSIONS
     assert len(result.vectors) == 2
-    assert result.vectors[0] == [0.001] * DEFAULT_EMBEDDING_DIMENSIONS
-    assert result.vectors[1] == [0.002] * DEFAULT_EMBEDDING_DIMENSIONS
+    assert result.vectors[0] == fake_vector_for("alpha")
+    assert result.vectors[1] == fake_vector_for("beta")
+    assert result.vectors[0] != result.vectors[1]
     assert result.input_tokens == 2
     again = asyncio.run(FakeEmbeddingProvider().embed(_embed_request()))
     assert again.vectors == result.vectors

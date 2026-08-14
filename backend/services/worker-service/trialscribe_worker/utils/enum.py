@@ -40,6 +40,7 @@ class JobKind(StrEnum):
 
     PROBE = "probe"
     PROVIDER_PROBE = "provider_probe"
+    INDEX_DOCUMENT = "index_document"
 
 
 class ProviderName(StrEnum):

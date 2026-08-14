@@ -47,6 +47,8 @@ class JobContext:
     conversation_id: UUID | None = None
     gateway: object | None = None
     evidence: object | None = None
+    sources: object | None = None
+    max_attempts: int = 1
 
 
 class JobPipeline(Protocol):
@@ -124,6 +126,7 @@ class JobRunner:
             organization_id=job.organization_id,
             account_id=job.requested_by_account_id,
             conversation_id=job.conversation_id,
+            max_attempts=self._event_settings.max_delivery_attempts,
         )
 
         try:

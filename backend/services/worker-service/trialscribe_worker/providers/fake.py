@@ -5,6 +5,7 @@ exercise timeouts, retries, and faults without a network call or a model file.
 """
 
 import asyncio
+import hashlib
 from dataclasses import dataclass, field
 from time import monotonic
 
@@ -121,10 +122,7 @@ class FakeEmbeddingProvider:
             if not request.texts:
                 raise ProviderConfigError
             return EmbeddingResult(
-                vectors=[
-                    _deterministic_vector(index)
-                    for index, _text in enumerate(request.texts)
-                ],
+                vectors=[fake_vector_for(text) for text in request.texts],
                 model=FAKE_EMBED_MODEL,
                 dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
                 input_tokens=len(request.texts),
@@ -141,9 +139,17 @@ def _last_user_content(request: ChatRequest) -> str:
     return ""
 
 
-def _deterministic_vector(index: int) -> list[float]:
-    value = min(0.001 * (index + 1), 1.0)
-    return [value] * DEFAULT_EMBEDDING_DIMENSIONS
+def fake_vector_for(text: str) -> list[float]:
+    """Return a deterministic 384-dimension vector derived from `text`."""
+
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    values: list[float] = []
+    while len(values) < DEFAULT_EMBEDDING_DIMENSIONS:
+        for byte in digest:
+            values.append(byte / 255.0)
+            if len(values) == DEFAULT_EMBEDDING_DIMENSIONS:
+                break
+    return values
 
 
 def _elapsed_ms(started: float) -> int:

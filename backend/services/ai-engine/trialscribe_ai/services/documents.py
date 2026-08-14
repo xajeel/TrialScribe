@@ -8,6 +8,7 @@ from trialscribe_ai.models.conversation import Conversation
 from trialscribe_ai.models.document import Document
 from trialscribe_ai.repositories.conversations import ConversationRepository
 from trialscribe_ai.repositories.documents import DocumentRepository
+from trialscribe_ai.services.document_events import DocumentEventPublisher
 from trialscribe_ai.utils.constant import (
     ALLOWED_DOCUMENT_CONTENT_TYPES,
     FILENAME_MAX_LENGTH,
@@ -37,9 +38,11 @@ class DocumentService:
         self,
         conversations: ConversationRepository,
         documents: DocumentRepository,
+        events: DocumentEventPublisher,
     ) -> None:
         self._conversations = conversations
         self._documents = documents
+        self._events = events
 
     async def upload(
         self,
@@ -80,7 +83,9 @@ class DocumentService:
         )
         conversation.last_activity_at = now
         await self._conversations.flush(conversation)
-        return await self._documents.add(document)
+        stored = await self._documents.add(document)
+        await self._events.record_uploaded(stored, now)
+        return stored
 
     async def list(
         self,
@@ -123,6 +128,7 @@ class DocumentService:
         account_id: UUID,
         conversation_id: UUID,
         document_id: UUID,
+        now: datetime,
     ) -> None:
         await self._require_accessible(organization_id, account_id, conversation_id)
         document = await self._documents.get_scoped(
@@ -133,6 +139,7 @@ class DocumentService:
         if document is None:
             raise DocumentNotFoundError
         await self._documents.delete(document)
+        await self._events.record_deleted(document, now)
 
     async def _require_accessible(
         self,
