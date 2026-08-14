@@ -92,12 +92,6 @@ async def _store_hit(
     hit: ResearchHit,
     retrieved_on: datetime,
 ) -> None:
-    await evidence.drop_source(
-        organization_id=context.organization_id,
-        conversation_id=conversation_id,
-        source_kind=EVIDENCE_SOURCE_WEB,
-        source_identity=identity,
-    )
     text = format_web_passage(
         title=hit.title,
         url=url,
@@ -114,6 +108,7 @@ async def _store_hit(
         return
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     batch_size = settings.embed_batch_size
+    staged: list[tuple[int, int, str, list[float], str, int]] = []
     for batch_index, start in enumerate(range(0, len(chunks), batch_size)):
         batch = chunks[start : start + batch_size]
         embedded = await gateway.embed(
@@ -130,18 +125,35 @@ async def _store_hit(
         for (start_char, end_char, chunk_text_value), vector in zip(
             batch, embedded.vectors, strict=True
         ):
-            await evidence.put(
-                organization_id=context.organization_id,
-                conversation_id=conversation_id,
-                text=chunk_text_value,
-                vector=vector,
-                source_kind=EVIDENCE_SOURCE_WEB,
-                source_identity=identity,
-                start_char=start_char,
-                end_char=end_char,
-                embedding_model=embedded.model,
-                embedding_dimensions=embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS,
+            staged.append(
+                (
+                    start_char,
+                    end_char,
+                    chunk_text_value,
+                    vector,
+                    embedded.model,
+                    embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS,
+                )
             )
+    await evidence.drop_source(
+        organization_id=context.organization_id,
+        conversation_id=conversation_id,
+        source_kind=EVIDENCE_SOURCE_WEB,
+        source_identity=identity,
+    )
+    for start_char, end_char, chunk_text_value, vector, model, dimensions in staged:
+        await evidence.put(
+            organization_id=context.organization_id,
+            conversation_id=conversation_id,
+            text=chunk_text_value,
+            vector=vector,
+            source_kind=EVIDENCE_SOURCE_WEB,
+            source_identity=identity,
+            start_char=start_char,
+            end_char=end_char,
+            embedding_model=model,
+            embedding_dimensions=dimensions,
+        )
 
 
 async def research_web_pipeline(context: JobContext) -> None:

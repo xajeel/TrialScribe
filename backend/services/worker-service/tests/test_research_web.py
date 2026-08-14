@@ -8,7 +8,12 @@ import pytest
 
 from trialscribe_worker.config import WorkerSettings
 from trialscribe_worker.pipelines.research_web import research_web_pipeline
-from trialscribe_worker.providers.fake import FakeChatProvider, FakeEmbeddingProvider, fake_vector_for
+from trialscribe_worker.providers.fake import (
+    FakeChatProvider,
+    FakeEmbeddingProvider,
+    FakeFault,
+    fake_vector_for,
+)
 from trialscribe_worker.providers.gateway import MemoryUsageRecorder, ProviderGateway
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.retrieval.research_types import ResearchHit
@@ -22,8 +27,8 @@ from trialscribe_worker.utils.constant import (
     EVIDENCE_SOURCE_WEB,
     RESEARCH_QUERY_PARAMETER,
 )
-from trialscribe_worker.utils.enum import JobKind
-from trialscribe_worker.utils.exceptions import ResearchSourceError
+from trialscribe_worker.utils.enum import JobKind, ProviderOutcome
+from trialscribe_worker.utils.exceptions import ProviderUnavailableError, ResearchSourceError
 
 _HELPERS = importlib.util.spec_from_file_location(
     "research_web_evidence_helpers",
@@ -73,10 +78,10 @@ async def _never_cancelled() -> None:
     return None
 
 
-def _gateway() -> ProviderGateway:
+def _gateway(embed: FakeEmbeddingProvider | None = None) -> ProviderGateway:
     return ProviderGateway(
         FakeChatProvider(),
-        FakeEmbeddingProvider(),
+        embed if embed is not None else FakeEmbeddingProvider(),
         WorkerSettings(provider_retry_attempts=1),
         MemoryUsageRecorder(),
         sleep=_no_sleep,
@@ -305,3 +310,50 @@ def test_retrieve_twice_with_the_same_job_still_returns_vectors() -> None:
     assert PUBMED_MARKER in first_texts[0]
     assert second_texts
     assert PUBMED_MARKER in second_texts[0]
+
+
+def test_embed_failure_keeps_existing_web_passage() -> None:
+    evidence = _evidence()
+    identity = source_identity_for(CDC_URL)
+    asyncio.run(
+        evidence.put(
+            organization_id=ORGANIZATION_ID,
+            conversation_id=CONVERSATION_ID,
+            text=WEB_MARKER,
+            vector=fake_vector_for(WEB_MARKER),
+            source_kind=EVIDENCE_SOURCE_WEB,
+            source_identity=identity,
+            start_char=0,
+            end_char=len(WEB_MARKER),
+            embedding_model=DEFAULT_EMBEDDING_MODEL,
+            embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
+        )
+    )
+    with pytest.raises(ProviderUnavailableError):
+        asyncio.run(
+            research_web_pipeline(
+                _context(
+                    evidence=evidence,
+                    gateway=_gateway(
+                        FakeEmbeddingProvider(
+                            fault=FakeFault(
+                                error=ProviderOutcome.ERROR,
+                                fail_times=0,
+                            )
+                        )
+                    ),
+                    pubmed=FakeSource(),
+                    web=FakeSource([_hit(CDC_URL, "replacement body")]),
+                )
+            )
+        )
+    found = asyncio.run(
+        evidence.search(
+            organization_id=ORGANIZATION_ID,
+            conversation_id=CONVERSATION_ID,
+            vector=fake_vector_for(WEB_MARKER),
+            k=8,
+        )
+    )
+    assert [chunk.source_identity for chunk in found] == [identity]
+    assert WEB_MARKER in found[0].text
