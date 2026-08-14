@@ -2,13 +2,16 @@
 
 from uuid import UUID
 
+from trialscribe_db.runtime import DatabaseRuntime
+
 from trialscribe_worker.config import WorkerSettings
 from trialscribe_worker.models.source_document import SourceDocument
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.providers.types import EmbeddingRequest
+from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
 from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
 from trialscribe_worker.retrieval.chunking import chunk_text, page_for_span
-from trialscribe_worker.retrieval.chroma_index import EvidenceIndex
+from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.retrieval.extraction import extract_source
 from trialscribe_worker.services.job_runner import JobContext
 from trialscribe_worker.utils.constant import (
@@ -192,3 +195,56 @@ async def _index(
         None,
     )
     await context.report(100)
+
+
+async def run_index_document_job(
+    context: JobContext,
+    runtime: DatabaseRuntime,
+    chroma_index: ChromaIndex,
+) -> None:
+    """Index inside one transaction; persist a last-attempt failure in another.
+
+    Chroma writes leave this function as soon as they happen. PostgreSQL writes
+    do not. If the work raises, the SQL transaction rolls back, so the failed
+    document status has to be written again after that rollback or the file
+    stays `pending` forever.
+    """
+
+    if not isinstance(context.gateway, ProviderGateway):
+        raise WorkerServiceError
+    try:
+        async with runtime.transaction() as session:
+            context.evidence = EvidenceIndex(
+                EvidenceChunkRepository(session),
+                chroma_index,
+            )
+            context.sources = SourceDocumentRepository(session)
+            await index_document_pipeline(context)
+    except (InvalidJobInputError, JobCancelledError):
+        raise
+    except Exception:
+        await _commit_terminal_failure(context, runtime)
+        raise
+
+
+async def _commit_terminal_failure(
+    context: JobContext,
+    runtime: DatabaseRuntime,
+) -> None:
+    if context.attempt < context.max_attempts or context.conversation_id is None:
+        return
+    try:
+        document_id = _document_id(context)
+    except InvalidJobInputError:
+        return
+    try:
+        async with runtime.transaction() as session:
+            await SourceDocumentRepository(session).mark_status(
+                context.organization_id,
+                context.conversation_id,
+                document_id,
+                FAILED_STATUS,
+                INDEX_FAILED_ERROR,
+            )
+    except Exception:
+        return

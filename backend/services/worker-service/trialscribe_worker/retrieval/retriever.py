@@ -1,5 +1,6 @@
 """Embed a question and hydrate tenant-scoped passages from the evidence index."""
 
+import hashlib
 from uuid import UUID
 
 from trialscribe_worker.config import WorkerSettings
@@ -41,10 +42,11 @@ class ConversationRetriever:
         stripped = query.strip()
         if not stripped:
             return []
+        digest = hashlib.sha256(stripped.encode("utf-8")).hexdigest()[:16]
         key = (
-            f"{job_id}:retrieve:0"
+            f"{job_id}:retrieve:{digest}"
             if job_id is not None
-            else f"retrieve:{conversation_id}:0"
+            else f"retrieve:{conversation_id}:{digest}"
         )
         embedded = await self._gateway.embed(
             EmbeddingRequest(

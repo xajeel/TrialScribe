@@ -33,7 +33,7 @@ from trialscribe_events.utils.constant import (
 )
 
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSettings
-from trialscribe_worker.pipelines.index_document import index_document_pipeline
+from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.provider_probe import PROBE_CHAT_MESSAGE, provider_probe_pipeline
 from trialscribe_worker.providers.fake import (
     FakeChatProvider,
@@ -47,7 +47,6 @@ from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkReposit
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import PostgresUsageRecorder
-from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.schemas.job import JobCreateRequest
 from trialscribe_worker.services.job_runner import JobContext, JobRunner
@@ -262,13 +261,7 @@ class Backbone:
 
         async def run_index_document(context: JobContext) -> None:
             context.gateway = self.gateway
-            async with self.runtime.transaction() as session:
-                context.evidence = EvidenceIndex(
-                    EvidenceChunkRepository(session),
-                    self.chroma_index,
-                )
-                context.sources = SourceDocumentRepository(session)
-                await index_document_pipeline(context)
+            await run_index_document_job(context, self.runtime, self.chroma_index)
 
         runner = JobRunner(
             self.runtime,

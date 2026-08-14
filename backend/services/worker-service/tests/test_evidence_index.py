@@ -85,6 +85,25 @@ class MemoryChunks:
             self.rows.pop(chunk_id, None)
 
 
+def _clause_value(clause: dict[str, object]) -> tuple[str, str]:
+    key = next(iter(clause))
+    matcher = clause[key]
+    assert isinstance(matcher, dict)
+    return key, str(matcher["$eq"])
+
+
+def _metadata_matches(metadata: dict[str, object], where: dict[str, object]) -> bool:
+    clauses = where.get("$and")
+    if not isinstance(clauses, list):
+        return False
+    for clause in clauses:
+        assert isinstance(clause, dict)
+        key, expected = _clause_value(clause)
+        if str(metadata.get(key)) != expected:
+            return False
+    return True
+
+
 class MemoryCollection:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -120,9 +139,22 @@ class MemoryCollection:
         ]
         return {"ids": [matched[:n_results]]}
 
-    async def delete(self, ids: list[str]) -> None:
-        for chunk_id in ids:
-            self.records.pop(chunk_id, None)
+    async def delete(
+        self,
+        ids: list[str] | None = None,
+        where: dict[str, object] | None = None,
+    ) -> None:
+        if ids:
+            for chunk_id in ids:
+                self.records.pop(chunk_id, None)
+        if where is not None:
+            stale = [
+                chunk_id
+                for chunk_id, (_vector, metadata) in self.records.items()
+                if _metadata_matches(metadata, where)
+            ]
+            for chunk_id in stale:
+                self.records.pop(chunk_id, None)
 
 
 class MemoryChroma:
@@ -338,6 +370,60 @@ def test_drop_source_removes_only_that_source() -> None:
         )
     )
     assert [chunk.id for chunk in found] == [chunk_b.id]
+
+
+def test_drop_source_removes_chroma_orphans_when_postgres_has_no_ids() -> None:
+    chunks = MemoryChunks()
+    client = MemoryChroma()
+    index = EvidenceIndex(
+        chunks,  # type: ignore[arg-type]
+        ChromaIndex(client, embed_query=None),
+    )
+    source = str(uuid4())
+    chunk = asyncio.run(
+        put_chunk(
+            index,
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            text="orphan",
+            source_identity=source,
+            source_kind=EVIDENCE_SOURCE_RESEARCH_DOCUMENT,
+        )
+    )
+    chunks.rows.clear()
+    collection = client.collections[collection_name(CONVERSATION_A)]
+    assert str(chunk.id) in collection.records
+
+    asyncio.run(
+        index.drop_source(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            source_kind=EVIDENCE_SOURCE_RESEARCH_DOCUMENT,
+            source_identity=source,
+        )
+    )
+    assert str(chunk.id) not in collection.records
+
+    replacement = asyncio.run(
+        put_chunk(
+            index,
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            text="kept",
+            source_identity=source,
+            source_kind=EVIDENCE_SOURCE_RESEARCH_DOCUMENT,
+        )
+    )
+    collection.forced_ids = [str(chunk.id), str(replacement.id)]
+    found = asyncio.run(
+        index.search(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            vector=PROBE_VECTOR,
+            k=5,
+        )
+    )
+    assert [row.id for row in found] == [replacement.id]
 
 
 def test_list_and_delete_for_source_sql_names_tenant_and_source() -> None:

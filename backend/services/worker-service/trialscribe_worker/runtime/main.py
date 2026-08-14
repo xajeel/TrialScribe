@@ -36,7 +36,7 @@ from trialscribe_worker.pipelines.document_events import (
     handle_document_deleted,
     handle_document_uploaded,
 )
-from trialscribe_worker.pipelines.index_document import index_document_pipeline
+from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
 from trialscribe_worker.providers.factory import build_providers
@@ -45,7 +45,6 @@ from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkReposit
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import PostgresUsageRecorder
-from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
 from trialscribe_worker.runtime.supervisor import ConsumerSupervisor
 from trialscribe_worker.services.job_runner import JobContext, JobRunner
@@ -103,13 +102,7 @@ async def run_worker(stop: asyncio.Event) -> None:
 
     async def run_index_document(context: JobContext) -> None:
         context.gateway = gateway
-        async with runtime.transaction() as session:
-            context.evidence = EvidenceIndex(
-                EvidenceChunkRepository(session),
-                chroma_index,
-            )
-            context.sources = SourceDocumentRepository(session)
-            await index_document_pipeline(context)
+        await run_index_document_job(context, runtime, chroma_index)
 
     runner = JobRunner(
         runtime,

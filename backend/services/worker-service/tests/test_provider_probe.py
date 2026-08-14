@@ -66,9 +66,33 @@ class MemoryCollection:
         del query_embeddings, where
         return {"ids": [list(self.records)[:n_results]]}
 
-    async def delete(self, ids: list[str]) -> None:
-        for chunk_id in ids:
-            self.records.pop(chunk_id, None)
+    async def delete(
+        self,
+        ids: list[str] | None = None,
+        where: dict[str, object] | None = None,
+    ) -> None:
+        if ids:
+            for chunk_id in ids:
+                self.records.pop(chunk_id, None)
+        if where is not None:
+            clauses = where.get("$and")
+            if not isinstance(clauses, list):
+                return
+            stale: list[str] = []
+            for chunk_id, (_vector, metadata) in self.records.items():
+                matched = True
+                for clause in clauses:
+                    assert isinstance(clause, dict)
+                    key = next(iter(clause))
+                    matcher = clause[key]
+                    assert isinstance(matcher, dict)
+                    if str(metadata.get(key)) != str(matcher["$eq"]):
+                        matched = False
+                        break
+                if matched:
+                    stale.append(chunk_id)
+            for chunk_id in stale:
+                self.records.pop(chunk_id, None)
 
 
 class MemoryChroma:

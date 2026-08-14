@@ -168,6 +168,61 @@ def test_blank_query_does_not_embed() -> None:
     assert embed.calls == 0
 
 
+def test_second_retrieve_with_the_same_job_still_returns_vectors() -> None:
+    retriever, evidence, _chroma, embed = _retriever()
+    source_a = str(uuid4())
+
+    async def scenario() -> tuple[list[str], list[str], int]:
+        await evidence.put(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            text=PHRASE,
+            vector=fake_vector_for(PHRASE),
+            source_kind=EVIDENCE_SOURCE_RESEARCH_DOCUMENT,
+            source_identity=source_a,
+            start_char=0,
+            end_char=len(PHRASE),
+            embedding_model=DEFAULT_EMBEDDING_MODEL,
+            embedding_dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
+        )
+        first = await retriever.retrieve(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            query=PHRASE,
+            job_id=JOB_ID,
+            account_id=ACCOUNT_ID,
+            k=3,
+        )
+        second = await retriever.retrieve(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            query=PHRASE,
+            job_id=JOB_ID,
+            account_id=ACCOUNT_ID,
+            k=3,
+        )
+        other = await retriever.retrieve(
+            organization_id=ORGANIZATION_A,
+            conversation_id=CONVERSATION_A,
+            query="a different question",
+            job_id=JOB_ID,
+            account_id=ACCOUNT_ID,
+            k=3,
+        )
+        return (
+            [chunk.text for chunk in first],
+            [chunk.text for chunk in second],
+            embed.calls,
+            other,
+        )
+
+    first_texts, second_texts, calls, other = asyncio.run(scenario())
+    assert first_texts == [PHRASE]
+    assert second_texts == [PHRASE]
+    assert calls == 3
+    assert isinstance(other, list)
+
+
 def test_retrieve_without_organization_is_a_config_error() -> None:
     retriever, _evidence, _chroma, _embed = _retriever()
     try:

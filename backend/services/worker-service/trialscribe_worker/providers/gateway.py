@@ -174,16 +174,10 @@ class ProviderGateway:
         )
 
     async def _replay_embed(self, request: EmbeddingRequest) -> EmbeddingResult | None:
-        row = await self._recorder.find(request.idempotency_key)
-        if row is None or row.outcome != ProviderOutcome.SUCCEEDED.value:
-            return None
-        return EmbeddingResult(
-            vectors=[],
-            model=row.model,
-            dimensions=self._settings.embedding_dimensions,
-            input_tokens=row.input_tokens,
-            latency_ms=row.latency_ms,
-        )
+        # Usage rows store token counts, not vectors. Rebuilding an empty
+        # EmbeddingResult here made the next retrieve crash (B31).
+        del request
+        return None
 
     async def _execute(
         self,

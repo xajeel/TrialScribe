@@ -232,6 +232,19 @@ def test_semaphore_caps_in_flight_embeds() -> None:
     assert embed.peak_in_flight == 1
 
 
+def test_embed_replay_misses_cache_and_returns_vectors() -> None:
+    gateway, _chat, embed, _usage = _gateway()
+    request = _embed_request("stable-embed-key")
+
+    first = asyncio.run(gateway.embed(request))
+    second = asyncio.run(gateway.embed(request))
+
+    assert embed.calls == 2
+    assert first.vectors
+    assert second.vectors
+    assert first.vectors[0] == second.vectors[0]
+
+
 def test_usage_record_failure_does_not_hide_success() -> None:
     class BoomRecorder(MemoryUsageRecorder):
         async def record(self, record: object) -> None:
