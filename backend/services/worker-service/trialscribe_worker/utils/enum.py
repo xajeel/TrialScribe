@@ -41,6 +41,7 @@ class JobKind(StrEnum):
     PROBE = "probe"
     PROVIDER_PROBE = "provider_probe"
     INDEX_DOCUMENT = "index_document"
+    RESEARCH_WEB = "research_web"
 
 
 class ProviderName(StrEnum):

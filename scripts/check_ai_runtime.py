@@ -17,6 +17,7 @@ BACKEND_ROOT = REPO_ROOT / "backend"
 INTEGRATION_TESTS = (
     "services/worker-service/tests/test_ai_runtime_integration.py",
     "services/worker-service/tests/test_rag_integration.py",
+    "services/worker-service/tests/test_web_research_integration.py",
 )
 COORDINATOR_PROBE_GROUP = "trialscribe-ai-runtime-coordinator-readiness"
 COORDINATOR_ATTEMPTS = 30

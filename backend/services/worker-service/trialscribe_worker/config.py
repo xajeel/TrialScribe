@@ -23,6 +23,9 @@ from trialscribe_worker.utils.constant import (
     DEFAULT_PROVIDER_RETRY_BASE_SECONDS,
     DEFAULT_PROVIDER_RETRY_MAX_SECONDS,
     DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+    DEFAULT_RESEARCH_MAX_RESULTS,
+    DEFAULT_RESEARCH_RETRY_ATTEMPTS,
+    DEFAULT_RESEARCH_TIMEOUT_SECONDS,
     DEFAULT_RETRIEVE_K,
     MAX_PROGRESS,
     MIN_PROGRESS,
@@ -82,6 +85,15 @@ class WorkerSettings(BaseSettings):
     chunk_overlap_chars: int = Field(default=DEFAULT_CHUNK_OVERLAP_CHARS, ge=0)
     embed_batch_size: int = Field(default=DEFAULT_EMBED_BATCH_SIZE, ge=1)
     retrieve_k: int = Field(default=DEFAULT_RETRIEVE_K, ge=1)
+    research_max_results: int = Field(default=DEFAULT_RESEARCH_MAX_RESULTS, ge=1)
+    research_timeout_seconds: float = Field(
+        default=DEFAULT_RESEARCH_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    research_retry_attempts: int = Field(
+        default=DEFAULT_RESEARCH_RETRY_ATTEMPTS,
+        ge=1,
+    )
 
     @field_validator("supervisor_restart_cap_seconds")
     @classmethod
@@ -139,6 +151,8 @@ class WorkerSecretSettings(BaseSettings):
     deepseek_api_key: SecretStr = Field(default=SecretStr(""))
     deepseek_base_url: str = Field(default=DEFAULT_DEEPSEEK_BASE_URL, min_length=1)
     chroma_url: str = Field(default=DEFAULT_CHROMA_URL, min_length=1)
+    ncbi_api_key: SecretStr = Field(default=SecretStr(""))
+    tavily_api_key: SecretStr = Field(default=SecretStr(""))
 
     def api_key(self) -> str:
         """Reveal the DeepSeek key only for client construction."""

@@ -6,6 +6,7 @@ from contextlib import suppress
 from urllib.parse import urlparse
 
 import chromadb
+import httpx
 from redis.asyncio import Redis
 
 from pydantic import BaseModel
@@ -39,6 +40,7 @@ from trialscribe_worker.pipelines.document_events import (
 from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
+from trialscribe_worker.pipelines.research_web import run_research_web_job
 from trialscribe_worker.providers.factory import build_providers
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
@@ -46,6 +48,8 @@ from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import PostgresUsageRecorder
 from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
+from trialscribe_worker.retrieval.pubmed import PubMedClient
+from trialscribe_worker.retrieval.tavily import TavilyClient
 from trialscribe_worker.runtime.supervisor import ConsumerSupervisor
 from trialscribe_worker.services.job_runner import JobContext, JobRunner
 from trialscribe_worker.services.jobs import JobService
@@ -104,6 +108,24 @@ async def run_worker(stop: asyncio.Event) -> None:
         context.gateway = gateway
         await run_index_document_job(context, runtime, chroma_index)
 
+    async def run_research_web(context: JobContext) -> None:
+        context.gateway = gateway
+        timeout = httpx.Timeout(worker_settings.research_timeout_seconds)
+        async with httpx.AsyncClient(timeout=timeout) as http:
+            pubmed = PubMedClient(
+                http,
+                api_key=secrets.ncbi_api_key.get_secret_value(),
+                timeout_seconds=worker_settings.research_timeout_seconds,
+                retry_attempts=worker_settings.research_retry_attempts,
+            )
+            web = TavilyClient(
+                http,
+                api_key=secrets.tavily_api_key.get_secret_value(),
+                timeout_seconds=worker_settings.research_timeout_seconds,
+                retry_attempts=worker_settings.research_retry_attempts,
+            )
+            await run_research_web_job(context, runtime, chroma_index, pubmed, web)
+
     runner = JobRunner(
         runtime,
         progress,
@@ -113,6 +135,7 @@ async def run_worker(stop: asyncio.Event) -> None:
             JobKind.PROBE: probe_pipeline,
             JobKind.PROVIDER_PROBE: run_provider_probe,
             JobKind.INDEX_DOCUMENT: run_index_document,
+            JobKind.RESEARCH_WEB: run_research_web,
         },
     )
 

@@ -48,6 +48,7 @@ class JobContext:
     gateway: object | None = None
     evidence: object | None = None
     sources: object | None = None
+    research: object | None = None
     max_attempts: int = 1
 
 
