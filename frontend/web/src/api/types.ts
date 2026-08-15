@@ -159,3 +159,60 @@ export interface M11SectionRevisionPage {
   items: M11SectionRevision[];
   next_after_revision: number | null;
 }
+
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface JobRecord {
+  id: string;
+  organization_id: string;
+  conversation_id: string | null;
+  kind: string;
+  status: JobStatus;
+  progress: number;
+  attempt: number;
+  error_code: string | null;
+  correlation_id: string;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  cancel_requested_at: string | null;
+}
+
+export interface JobList {
+  items: JobRecord[];
+}
+
+export interface GenerationAttemptRecord {
+  section_number: string;
+  status: string;
+  error_code: string | null;
+  citation_ids: string[];
+  attempt: number;
+}
+
+export interface GenerationAttemptList {
+  items: GenerationAttemptRecord[];
+}
+
+export interface EvidenceChunkRecord {
+  id: string;
+  conversation_id: string;
+  organization_id: string;
+  source_kind: string;
+  source_identity: string;
+  page_number: number | null;
+  start_char: number;
+  end_char: number;
+  text: string;
+}
+
+export interface EvidenceChunkList {
+  items: EvidenceChunkRecord[];
+}

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_db.runtime import DatabaseRuntime
@@ -24,10 +24,22 @@ from trialscribe_worker.api.dependencies import (
     get_progress_store,
     get_registry,
 )
+from trialscribe_worker.repositories.generation_outcomes import GenerationOutcomeRepository
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
-from trialscribe_worker.schemas.job import JobCreateRequest, JobResponse
+from trialscribe_worker.schemas.job import (
+    GenerationAttemptListResponse,
+    GenerationAttemptPublic,
+    JobCreateRequest,
+    JobListResponse,
+    JobResponse,
+)
 from trialscribe_worker.services.jobs import JobService
+from trialscribe_worker.utils.constant import (
+    JOB_LIST_DEFAULT_LIMIT,
+    JOB_LIST_MAX_LIMIT,
+    JOB_LIST_MIN_LIMIT,
+)
 
 logger = get_event_logger(__name__)
 
@@ -93,6 +105,57 @@ async def _hand_over_promptly(relay: OutboxRelay) -> None:
             "job.inline_handover_failed",
             extra={"event_context": event_context(reason="relay_unavailable")},
         )
+
+
+@router.get("", response_model=JobListResponse)
+async def list_jobs(
+    conversation_id: UUID,
+    organization_id: OrganizationId,
+    runtime: Runtime,
+    progress: Progress,
+    registry: Registry,
+    event_settings: EventSettings,
+    kind: str | None = None,
+    limit: Annotated[int, Query(ge=JOB_LIST_MIN_LIMIT, le=JOB_LIST_MAX_LIMIT)] = (
+        JOB_LIST_DEFAULT_LIMIT
+    ),
+) -> JobListResponse:
+    async with runtime.transaction() as session:
+        service = _service(session, progress, registry, event_settings.topic_prefix)
+        return await service.list_jobs(organization_id, conversation_id, kind, limit)
+
+
+@router.get("/{job_id}/attempts", response_model=GenerationAttemptListResponse)
+async def list_job_attempts(
+    job_id: UUID,
+    organization_id: OrganizationId,
+    runtime: Runtime,
+    progress: Progress,
+    registry: Registry,
+    event_settings: EventSettings,
+) -> GenerationAttemptListResponse:
+    async with runtime.transaction() as session:
+        service = _service(session, progress, registry, event_settings.topic_prefix)
+        job = await service.get_job(organization_id, job_id)
+        if job.conversation_id is None:
+            return GenerationAttemptListResponse(items=[])
+        rows = await GenerationOutcomeRepository(session).list_latest_for_job(
+            organization_id,
+            job.conversation_id,
+            job_id,
+        )
+    return GenerationAttemptListResponse(
+        items=[
+            GenerationAttemptPublic(
+                section_number=row.section_number,
+                status=row.status,
+                error_code=row.error_code,
+                citation_ids=row.citation_ids,
+                attempt=row.attempt,
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.get("/{job_id}", response_model=JobResponse)

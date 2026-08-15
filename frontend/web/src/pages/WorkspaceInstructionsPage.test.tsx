@@ -8,6 +8,7 @@ import type {
   Conversation,
   ConversationMessage,
   DocumentRecord,
+  M11Section,
 } from "../api/types";
 import {
   AuthContext,
@@ -97,13 +98,65 @@ function createFetcher(
   return { fetcher, calls };
 }
 
+function draftSection(number: string, content = ""): M11Section {
+  return {
+    id: `s-${number}`,
+    conversation_id: CONVERSATION_ID,
+    organization_id: ORGANIZATION_ID,
+    catalog_version: "2025.1",
+    section_number: number,
+    title: `Section ${number}`,
+    position: Number(number),
+    instructions: "",
+    content,
+    status: "draft",
+    current_revision: content.trim() === "" ? 0 : 1,
+    completed_at: null,
+    completed_by_account_id: null,
+    created_at: "2026-07-28T09:00:00Z",
+    updated_at: "2026-07-28T09:00:00Z",
+  };
+}
+
+function queuedJob() {
+  return {
+    id: "job-gen-1",
+    organization_id: ORGANIZATION_ID,
+    conversation_id: CONVERSATION_ID,
+    kind: "generate_sections",
+    status: "queued",
+    progress: 0,
+    attempt: 0,
+    error_code: null,
+    correlation_id: "corr-1",
+    created_at: "2026-08-14T09:00:00Z",
+    updated_at: "2026-08-14T09:00:00Z",
+    started_at: null,
+    finished_at: null,
+    cancel_requested_at: null,
+  };
+}
+
 function workspaceHandler(
   instructions: ConversationMessage[],
   documents: DocumentRecord[] = [documentRecord("doc-1")],
   record: Conversation = conversation(),
+  sections: M11Section[] = [],
 ) {
   return (path: string, options?: RequestOptions): unknown => {
     const method = options?.method ?? "GET";
+    if (path === "/v1/jobs" && method === "POST") {
+      return queuedJob();
+    }
+    if (path.endsWith("/cancel") && path.startsWith("/v1/jobs/")) {
+      return { ...queuedJob(), status: "cancelled" };
+    }
+    if (path.endsWith("/attempts") && path.startsWith("/v1/jobs/")) {
+      return { items: [] };
+    }
+    if (path.startsWith("/v1/jobs")) {
+      return { items: [] };
+    }
     if (path.includes("/messages")) {
       if (method === "POST") {
         const body = options?.json as { content: string };
@@ -115,7 +168,7 @@ function workspaceHandler(
       return { items: documents, next_cursor: null };
     }
     if (path.includes("/m11-sections")) {
-      return { catalog_version: "2025.1", items: [] };
+      return { catalog_version: "2025.1", items: sections };
     }
     if (path === `/v1/ai/conversations/${CONVERSATION_ID}`) {
       return record;
@@ -313,10 +366,83 @@ describe("WorkspaceInstructionsPage", () => {
     expect(await screen.findByText("First instruction")).toBeInTheDocument();
   });
 
-  it("states that generation is unavailable and exposes no generate control", async () => {
-    const { fetcher } = createFetcher(workspaceHandler([message(1, "One")]));
+  it("starts generation for empty drafts from the live panel", async () => {
+    const { fetcher, calls } = createFetcher(
+      workspaceHandler(
+        [message(1, "One")],
+        [documentRecord("doc-1")],
+        conversation(),
+        [draftSection("1"), draftSection("2", "Already written")],
+      ),
+    );
+    const user = userEvent.setup();
 
     renderInstructions(fetcher);
+
+    const generate = await screen.findByRole("button", { name: "Generate" });
+    await user.click(generate);
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.path === "/v1/jobs" &&
+            call.options?.method === "POST" &&
+            (call.options.json as { kind?: string }).kind === "generate_sections",
+        ),
+      ).toBe(true);
+    });
+    const created = calls.find(
+      (call) => call.path === "/v1/jobs" && call.options?.method === "POST",
+    );
+    expect(created?.options?.json).toMatchObject({
+      kind: "generate_sections",
+      conversation_id: CONVERSATION_ID,
+      parameters: {
+        section_numbers: ["1"],
+        expected_revisions: { "1": 0 },
+      },
+    });
+  });
+
+  it("keeps the unavailable copy and no generate control on the review route", async () => {
+    const { fetcher } = createFetcher(() => {
+      throw new Error("review routes must not fetch");
+    });
+    const auth: AuthContextValue = {
+      status: "authenticated",
+      account: {
+        id: ACCOUNT_ID,
+        email: "author@example.com",
+        is_active: true,
+        created_at: "2026-07-28T08:00:00Z",
+      },
+      signIn: async () => undefined,
+      signOut: async () => undefined,
+      authorizedFetch: fetcher,
+    };
+    const organization: OrganizationContextValue = {
+      status: "ready",
+      organizations: [],
+      activeId: null,
+      action: "idle",
+      feedback: null,
+      select: () => undefined,
+      reload: () => undefined,
+      create: async () => true,
+      join: async () => true,
+      dismissFeedback: () => undefined,
+    };
+
+    render(
+      <MemoryRouter>
+        <AuthContext.Provider value={auth}>
+          <OrganizationContext.Provider value={organization}>
+            <WorkspaceInstructionsPage review="populated" />
+          </OrganizationContext.Provider>
+        </AuthContext.Provider>
+      </MemoryRouter>,
+    );
 
     expect(
       await screen.findByRole("heading", { name: "Generate section drafts" }),
@@ -329,11 +455,7 @@ describe("WorkspaceInstructionsPage", () => {
         "Draft generation is not available yet. Sections are written and revised manually in the workspace.",
       ),
     ).toBeInTheDocument();
-    // The panel offers no control at all — not even a disabled one.
     expect(within(panel).queryAllByRole("button")).toHaveLength(0);
-    expect(within(panel).queryAllByRole("textbox")).toHaveLength(0);
-    expect(within(panel).queryAllByRole("radio")).toHaveLength(0);
-    expect(within(panel).queryAllByRole("checkbox")).toHaveLength(0);
     expect(
       screen.queryByRole("button", { name: /generate/i }),
     ).not.toBeInTheDocument();

@@ -7,6 +7,7 @@ import { InstructionComposer } from "../components/InstructionComposer";
 import { InstructionTimeline } from "../components/InstructionTimeline";
 import { WorkspaceChrome } from "../components/WorkspaceChrome";
 import { useOrganization } from "../org/useOrganization";
+import { useGenerationJob, emptyDraftSections } from "../workspace/useGenerationJob";
 import { useProtocolOverview } from "../workspace/useProtocolOverview";
 import {
   REVIEW_WORKSPACE_ORGANIZATION,
@@ -38,6 +39,14 @@ export function WorkspaceInstructionsPage({
   );
   const sample = reviewing ? reviewOverview(review) : null;
   const overview = sample ?? live;
+  const generation = useGenerationJob({
+    organizationId: reviewing ? null : (liveActive?.id ?? null),
+    conversationId: reviewing ? null : (conversationId ?? null),
+    sections: overview.sections,
+    fetcher: authorizedFetch,
+    enabled: !reviewing && overview.status === "ready",
+    onTerminal: overview.retry,
+  });
 
   const accountId = reviewing
     ? REVIEW_WORKSPACE_ORGANIZATION.owner_account_id
@@ -130,7 +139,18 @@ export function WorkspaceInstructionsPage({
               )}
             </section>
 
-            <GenerationPanel sourceCount={overview.documents.length} />
+            <GenerationPanel
+              sourceCount={overview.documents.length}
+              reviewing={reviewing}
+              job={generation.job}
+              attempts={generation.attempts}
+              emptyDraftCount={emptyDraftSections(overview.sections).length}
+              pending={generation.pending}
+              error={generation.error}
+              onGenerate={() => void generation.start()}
+              onCancel={() => void generation.cancel()}
+              onRetryFailed={() => void generation.retryFailed()}
+            />
           </div>
         )}
       </main>

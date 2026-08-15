@@ -1,7 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { M11Section } from "../api/types";
+import type { RequestOptions } from "../api/client";
+import type { EvidenceChunkRecord, M11Section } from "../api/types";
+import type { AuthorizedFetch } from "../auth/AuthContext";
 import { SectionReader, wordCountOf } from "./SectionReader";
 
 function section(overrides: Partial<M11Section> = {}): M11Section {
@@ -126,5 +129,90 @@ describe("SectionReader", () => {
       />,
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens a citation onto trial data from the live inspector", async () => {
+    const chunkId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const chunk: EvidenceChunkRecord = {
+      id: chunkId,
+      conversation_id: "conversation-1",
+      organization_id: "organization-1",
+      source_kind: "trial_data",
+      source_identity: "trial-1",
+      page_number: null,
+      start_char: 0,
+      end_char: 12,
+      text: "Age 18 years",
+    };
+    async function fetcher<T>(
+      path: string,
+      _options?: RequestOptions,
+    ): Promise<T> {
+      if (path.includes("evidence-chunks") && path.includes(chunkId)) {
+        return { items: [chunk] } as T;
+      }
+      throw new Error(`unexpected ${path}`);
+    }
+    const user = userEvent.setup();
+    render(
+      <SectionReader
+        section={section({
+          content: `Individuals must be adults [cite:${chunkId}].`,
+        })}
+        returnFocusTo={null}
+        onOpenInEditor={vi.fn()}
+        onAddInstruction={vi.fn()}
+        onClose={vi.fn()}
+        inspectCitations={{
+          fetcher: fetcher as AuthorizedFetch,
+          organizationId: "organization-1",
+          conversationId: "conversation-1",
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: `Inspect citation ${chunkId}` }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Citation" })).toBeInTheDocument();
+    expect(screen.getByText("Trial data")).toBeInTheDocument();
+    expect(screen.getByText("Age 18 years")).toBeInTheDocument();
+  });
+
+  it("shows the missing copy for an unknown citation", async () => {
+    const chunkId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    async function fetcher<T>(
+      path: string,
+      _options?: RequestOptions,
+    ): Promise<T> {
+      if (path.includes("evidence-chunks")) {
+        return { items: [] } as T;
+      }
+      throw new Error(`unexpected ${path}`);
+    }
+    const user = userEvent.setup();
+    render(
+      <SectionReader
+        section={section({ content: `[cite:${chunkId}]` })}
+        returnFocusTo={null}
+        onOpenInEditor={vi.fn()}
+        onAddInstruction={vi.fn()}
+        onClose={vi.fn()}
+        inspectCitations={{
+          fetcher: fetcher as AuthorizedFetch,
+          organizationId: "organization-1",
+          conversationId: "conversation-1",
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: `Inspect citation ${chunkId}` }),
+    );
+
+    expect(
+      await screen.findByText("That source is not in this conversation."),
+    ).toBeInTheDocument();
   });
 });

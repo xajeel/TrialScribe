@@ -13,6 +13,7 @@ from trialscribe_db.runtime import create_database_runtime
 
 from trialscribe_ai.api.conversations import router as conversation_router
 from trialscribe_ai.api.documents import router as document_router
+from trialscribe_ai.api.evidence import router as evidence_router
 from trialscribe_ai.api.m11_sections import router as m11_section_router
 from trialscribe_ai.models.health import HealthResponse
 from trialscribe_ai.utils.constant import (
@@ -26,6 +27,7 @@ from trialscribe_ai.utils.constant import (
     DOCUMENT_NOT_FOUND_DETAIL,
     DOCUMENT_TOO_LARGE_DETAIL,
     EMPTY_DOCUMENT_DETAIL,
+    INVALID_EVIDENCE_IDS_DETAIL,
     INVALID_M11_SECTION_INPUT_DETAIL,
     INVALID_TRIAL_DATA_DETAIL,
     INVALID_CONVERSATION_INPUT_DETAIL,
@@ -48,6 +50,7 @@ from trialscribe_ai.utils.exceptions import (
     DocumentNotFoundError,
     DocumentTooLargeError,
     EmptyDocumentError,
+    InvalidEvidenceRequestError,
     InvalidM11SectionInputError,
     InvalidConversationInputError,
     InvalidCursorError,
@@ -78,6 +81,7 @@ app: FastAPI = FastAPI(
 )
 app.include_router(conversation_router)
 app.include_router(document_router)
+app.include_router(evidence_router)
 app.include_router(m11_section_router)
 
 app.add_middleware(
@@ -117,6 +121,8 @@ async def ai_engine_error_response(
         status_code, detail = 422, INVALID_TRIAL_DATA_DETAIL
     elif isinstance(error, EmptyDocumentError):
         status_code, detail = 422, EMPTY_DOCUMENT_DETAIL
+    elif isinstance(error, InvalidEvidenceRequestError):
+        status_code, detail = 422, INVALID_EVIDENCE_IDS_DETAIL
     elif isinstance(error, M11SectionNotFoundError):
         status_code, detail = 404, M11_SECTION_NOT_FOUND_DETAIL
     elif isinstance(error, InvalidM11SectionInputError):
