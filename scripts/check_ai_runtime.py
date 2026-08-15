@@ -18,6 +18,7 @@ INTEGRATION_TESTS = (
     "services/worker-service/tests/test_ai_runtime_integration.py",
     "services/worker-service/tests/test_rag_integration.py",
     "services/worker-service/tests/test_web_research_integration.py",
+    "services/worker-service/tests/test_generate_sections_integration.py",
 )
 COORDINATOR_PROBE_GROUP = "trialscribe-ai-runtime-coordinator-readiness"
 COORDINATOR_ATTEMPTS = 30
@@ -171,7 +172,7 @@ def migrate(environment: dict[str, str], redactions: tuple[str, ...]) -> None:
             "-c",
             "packages/database/alembic.ini",
             "upgrade",
-            "0013_evidence_chunks",
+            "0014_section_generation_attempts",
         ],
         environment,
         redactions,
@@ -243,7 +244,7 @@ def main() -> int:
         return 1
     print(
         "healthy ai runtime provider probe, metering, isolation, chroma durability, "
-        "and fixture retrieval"
+        "fixture retrieval, and citation-backed section generation"
     )
     return 0
 

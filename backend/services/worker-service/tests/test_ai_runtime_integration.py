@@ -33,6 +33,7 @@ from trialscribe_events.utils.constant import (
 )
 
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSettings
+from trialscribe_worker.pipelines.generate_sections import run_generate_sections_job
 from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.provider_probe import PROBE_CHAT_MESSAGE, provider_probe_pipeline
 from trialscribe_worker.pipelines.research_web import run_research_web_job
@@ -233,6 +234,7 @@ class Backbone:
         self.chroma: Any
         self.chroma_index: ChromaIndex
         self.gateway: ProviderGateway
+        self.chat: Any = FakeChatProvider()
         self.research_pubmed: Any = SilentResearch()
         self.research_web: Any = SilentResearch()
         self.handled: list[UUID] = []
@@ -254,7 +256,7 @@ class Backbone:
         self.chroma = await connect_chroma()
         self.chroma_index = ChromaIndex(self.chroma, embed_query=None)
         self.gateway = ProviderGateway(
-            FakeChatProvider(),
+            self.chat,
             FakeEmbeddingProvider(),
             self.worker_settings,
             PostgresUsageRecorder(self.runtime),
@@ -284,6 +286,14 @@ class Backbone:
                 self.research_web,
             )
 
+        async def run_generate_sections(context: JobContext) -> None:
+            context.gateway = self.gateway
+            await run_generate_sections_job(
+                context,
+                self.runtime,
+                self.chroma_index,
+            )
+
         runner = JobRunner(
             self.runtime,
             self.progress,
@@ -293,6 +303,7 @@ class Backbone:
                 JobKind.PROVIDER_PROBE: run_provider_probe,
                 JobKind.INDEX_DOCUMENT: run_index_document,
                 JobKind.RESEARCH_WEB: run_research_web,
+                JobKind.GENERATE_SECTIONS: run_generate_sections,
             },
         )
 
@@ -412,8 +423,10 @@ class Backbone:
         return list(rows)
 
 
-async def with_backbone(scenario: Any) -> Any:
+async def with_backbone(scenario: Any, *, chat: Any | None = None) -> Any:
     backbone = Backbone(run_identifier())
+    if chat is not None:
+        backbone.chat = chat
     await backbone.open()
     try:
         tenant = await seed_tenant(backbone.runtime)

@@ -59,3 +59,7 @@ class DocumentExtractionError(WorkerServiceError):
 
 class ResearchSourceError(WorkerServiceError):
     """A research library did not answer before its retry budget ran out."""
+
+
+class GenerateSectionError(WorkerServiceError):
+    """One or more requested sections could not be drafted on this attempt."""

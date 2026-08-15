@@ -42,6 +42,24 @@ class JobKind(StrEnum):
     PROVIDER_PROBE = "provider_probe"
     INDEX_DOCUMENT = "index_document"
     RESEARCH_WEB = "research_web"
+    GENERATE_SECTIONS = "generate_sections"
+
+
+class GenerationAttemptStatus(StrEnum):
+    """How one section's generation attempt ended."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class GenerationErrorCode(StrEnum):
+    """Why one section was not written, in bounded terms safe to store."""
+
+    MISSING_SECTION = "missing_section"
+    EMPTY_OUTPUT = "empty_output"
+    PROVIDER_FAILED = "provider_failed"
+    REVISION_CONFLICT = "revision_conflict"
 
 
 class ProviderName(StrEnum):

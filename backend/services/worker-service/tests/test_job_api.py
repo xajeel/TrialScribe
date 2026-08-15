@@ -26,7 +26,8 @@ from trialscribe_worker.models.job import Job
 from trialscribe_worker.repositories.generation_outcomes import GenerationAttemptOutcome
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
-from trialscribe_worker.utils.enum import JobStatus
+from trialscribe_worker.utils.constant import GENERATE_SECTIONS_KIND
+from trialscribe_worker.utils.enum import JobKind, JobStatus
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000041")
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000042")
@@ -320,6 +321,25 @@ def test_a_kind_this_worker_does_not_serve_is_rejected(api: dict[str, Any]) -> N
 
     assert response.status_code == 422
     assert response.json() == {"detail": "job kind is not supported"}
+
+
+def test_generate_sections_is_an_accepted_job_kind(api: dict[str, Any]) -> None:
+    response = api["client"].post(
+        "/jobs",
+        json={
+            "kind": GENERATE_SECTIONS_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {
+                "section_numbers": ["5"],
+                "expected_revisions": {"5": 0},
+            },
+        },
+        headers=HEADERS,
+    )
+
+    assert JobKind.GENERATE_SECTIONS.value == GENERATE_SECTIONS_KIND
+    assert response.status_code == 202
+    assert response.json()["kind"] == GENERATE_SECTIONS_KIND
 
 
 def test_an_unreachable_broker_no_longer_costs_the_caller_their_job(
