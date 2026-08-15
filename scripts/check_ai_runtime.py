@@ -172,7 +172,7 @@ def migrate(environment: dict[str, str], redactions: tuple[str, ...]) -> None:
             "-c",
             "packages/database/alembic.ini",
             "upgrade",
-            "0015_m11_revision_actions",
+            "0016_protocol_readiness_checks",
         ],
         environment,
         redactions,

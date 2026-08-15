@@ -1,12 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AuthProvider } from "../auth/AuthContext";
-import { OrganizationProvider } from "../org/OrganizationContext";
+import {
+  AuthContext,
+  AuthProvider,
+  type AuthContextValue,
+  type AuthorizedFetch,
+} from "../auth/AuthContext";
+import {
+  OrganizationContext,
+  OrganizationProvider,
+  type OrganizationContextValue,
+} from "../org/OrganizationContext";
 import type { ExportReviewState } from "../product/deliveryAuditReviewFixtures";
 import { ExportPage } from "./ExportPage";
+
+const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000010";
+const ACCOUNT_ID = "00000000-0000-4000-8000-000000000020";
+const CONVERSATION_ID = "conversation-1";
 
 function unauthorized(): Response {
   return new Response(JSON.stringify({ detail: "Not authenticated" }), {
@@ -76,5 +89,139 @@ describe("ExportPage", () => {
     await user.click(screen.getByRole("button", { name: "Retry export" }));
     expect(screen.getByRole("heading", { name: "Preparing export" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/development review only/i);
+  });
+
+  it("keeps the review ready panel without fetching jobs", () => {
+    renderReview("ready");
+
+    expect(screen.getByRole("heading", { name: "Protocol ready" })).toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) =>
+        String(input).includes("/v1/jobs/readiness"),
+      ),
+    ).toBe(false);
+  });
+
+  it("blocks live export when the stored check is not ready", async () => {
+    const conversation = {
+      id: CONVERSATION_ID,
+      organization_id: ORGANIZATION_ID,
+      owner_account_id: ACCOUNT_ID,
+      title: "AURORA-301",
+      status: "active",
+      collaborator_account_ids: [],
+      created_at: "2026-07-28T09:00:00Z",
+      updated_at: "2026-07-28T09:00:00Z",
+      last_activity_at: "2026-07-28T09:00:00Z",
+      archived_at: null,
+    };
+    const section = {
+      id: "section-1",
+      conversation_id: CONVERSATION_ID,
+      organization_id: ORGANIZATION_ID,
+      catalog_version: "2025.1",
+      section_number: "1",
+      title: "Protocol Summary",
+      position: 1,
+      instructions: "",
+      content: "Done wording",
+      status: "done",
+      current_revision: 1,
+      completed_at: "2026-07-28T09:00:00Z",
+      completed_by_account_id: ACCOUNT_ID,
+      created_at: "2026-07-28T09:00:00Z",
+      updated_at: "2026-07-28T09:00:00Z",
+    };
+    const fetcher: AuthorizedFetch = async (path) => {
+      if (path.startsWith("/v1/jobs/readiness?")) {
+        return {
+          checked: false,
+          ready: false,
+          stale: false,
+          job_id: null,
+          computed_at: null,
+          protocol_title: "AURORA-301",
+          protocol_id: CONVERSATION_ID,
+          summary: {
+            total_sections: 0,
+            done_sections: 0,
+            draft_sections: 0,
+            ready_sources: 0,
+            pending_sources: 0,
+            failed_sources: 0,
+            latest_activity: null,
+            citations: null,
+          },
+          issues: [],
+          sections: [],
+        } as never;
+      }
+      if (path.includes("/messages")) {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path.includes("/documents")) {
+        return { items: [], next_cursor: null } as never;
+      }
+      if (path.includes("/m11-sections")) {
+        return { catalog_version: "2025.1", items: [section] } as never;
+      }
+      if (path === `/v1/ai/conversations/${CONVERSATION_ID}`) {
+        return conversation as never;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    const auth: AuthContextValue = {
+      status: "authenticated",
+      account: {
+        id: ACCOUNT_ID,
+        email: "author@example.com",
+        is_active: true,
+        created_at: "2026-07-28T08:00:00Z",
+      },
+      signIn: async () => undefined,
+      signOut: async () => undefined,
+      authorizedFetch: fetcher,
+    };
+    const organization: OrganizationContextValue = {
+      status: "ready",
+      organizations: [
+        {
+          id: ORGANIZATION_ID,
+          name: "Acme Trials",
+          role: "owner",
+          created_at: "2026-07-28T08:00:00Z",
+        },
+      ],
+      activeId: ORGANIZATION_ID,
+      action: "idle",
+      feedback: null,
+      select: () => undefined,
+      reload: () => undefined,
+      create: async () => true,
+      join: async () => true,
+      dismissFeedback: () => undefined,
+    };
+
+    render(
+      <MemoryRouter initialEntries={[`/workspace/${CONVERSATION_ID}/export`]}>
+        <AuthContext.Provider value={auth}>
+          <OrganizationContext.Provider value={organization}>
+            <Routes>
+              <Route
+                path="/workspace/:conversationId/export"
+                element={<ExportPage />}
+              />
+            </Routes>
+          </OrganizationContext.Provider>
+        </AuthContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText("Protocol is not ready to export."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate DOCX" })).toBeDisabled();
+    expect(screen.queryByText(/protocol ready/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review readiness" })).toBeInTheDocument();
   });
 });

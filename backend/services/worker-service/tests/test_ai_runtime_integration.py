@@ -37,6 +37,7 @@ from trialscribe_worker.pipelines.generate_sections import run_generate_sections
 from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.provider_probe import PROBE_CHAT_MESSAGE, provider_probe_pipeline
 from trialscribe_worker.pipelines.research_web import run_research_web_job
+from trialscribe_worker.pipelines.validate_readiness import run_validate_readiness_job
 from trialscribe_worker.providers.fake import (
     FakeChatProvider,
     FakeEmbeddingProvider,
@@ -294,6 +295,9 @@ class Backbone:
                 self.chroma_index,
             )
 
+        async def run_validate_readiness(context: JobContext) -> None:
+            await run_validate_readiness_job(context, self.runtime)
+
         runner = JobRunner(
             self.runtime,
             self.progress,
@@ -304,6 +308,7 @@ class Backbone:
                 JobKind.INDEX_DOCUMENT: run_index_document,
                 JobKind.RESEARCH_WEB: run_research_web,
                 JobKind.GENERATE_SECTIONS: run_generate_sections,
+                JobKind.VALIDATE_READINESS: run_validate_readiness,
             },
         )
 

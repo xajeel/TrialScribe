@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth";
+import { getReadiness } from "../api/jobs";
+import type { ReadinessRecord } from "../api/types";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import {
   ExportJobPanel,
@@ -84,6 +86,8 @@ export function ExportPage({
     "configuration" | ExportJobPanelState
   >(() => initialPanelState(review));
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<ReadinessRecord | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
   const routeConversationId = reviewing
     ? REVIEW_CONVERSATION.id
     : (conversationId ?? "");
@@ -100,6 +104,37 @@ export function ExportPage({
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (
+      reviewing ||
+      liveOrganization === null ||
+      conversationId === undefined ||
+      conversationId === ""
+    ) {
+      setReadiness(null);
+      setReadinessLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setReadinessLoading(true);
+    void getReadiness(authorizedFetch, liveOrganization.id, conversationId)
+      .then((record) => {
+        if (!cancelled) {
+          setReadiness(record);
+          setReadinessLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReadiness(null);
+          setReadinessLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authorizedFetch, conversationId, liveOrganization?.id, reviewing]);
 
   const close = () => {
     navigate(`/workspace/${encodeURIComponent(routeConversationId)}`);
@@ -188,6 +223,25 @@ export function ExportPage({
                     }
                   >
                     Review sections
+                  </button>
+                </div>
+              ) : !reviewing &&
+                (readinessLoading ||
+                  readiness === null ||
+                  !readiness.checked ||
+                  !readiness.ready ||
+                  readiness.stale) ? (
+                <div className="export-page__unavailable" role="status">
+                  <strong>Protocol is not ready to export.</strong>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(
+                        `/workspace/${encodeURIComponent(routeConversationId)}/readiness`,
+                      )
+                    }
+                  >
+                    Review readiness
                   </button>
                 </div>
               ) : !reviewing ? (

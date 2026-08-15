@@ -1,6 +1,7 @@
 """A conversation file the worker may read without owning the documents table."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 
@@ -16,3 +17,13 @@ class SourceDocument:
     status: str
     error: str | None
     content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDocumentMetadata:
+    """Upload facts needed to score readiness without loading file bytes."""
+
+    id: UUID
+    filename: str
+    status: str
+    updated_at: datetime

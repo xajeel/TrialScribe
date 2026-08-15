@@ -17,6 +17,14 @@ _LIST_FOR_JOB = text(
     "AND job_id = :job_id "
     "ORDER BY attempt DESC"
 )
+_LATEST_BY_SECTION = text(
+    "SELECT DISTINCT ON (section_number) section_number, status, error_code, "
+    "citation_ids, attempt "
+    "FROM trialscribe.section_generation_attempts "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id "
+    "ORDER BY section_number, created_at DESC"
+)
 _REWRITE_OPTIONS = text(
     "SELECT content, status, attempt "
     "FROM trialscribe.section_generation_attempts "
@@ -84,6 +92,35 @@ class GenerationOutcomeRepository:
                 attempt=int(row["attempt"]),
             )
         return list(latest.values())
+
+    async def latest_by_section(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> dict[str, GenerationAttemptOutcome]:
+        """Return the newest attempt per section across every job.
+
+        The statement never selects `prompt` or `content` (B4).
+        """
+
+        result = await self._session.execute(
+            _LATEST_BY_SECTION,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        latest: dict[str, GenerationAttemptOutcome] = {}
+        for row in result.mappings():
+            number = str(row["section_number"])
+            latest[number] = GenerationAttemptOutcome(
+                section_number=number,
+                status=str(row["status"]),
+                error_code=row["error_code"],
+                citation_ids=_citation_ids(row["citation_ids"]),
+                attempt=int(row["attempt"]),
+            )
+        return latest
 
     async def get_rewrite_options(
         self,

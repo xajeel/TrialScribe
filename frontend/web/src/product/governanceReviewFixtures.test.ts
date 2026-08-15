@@ -5,6 +5,7 @@ import type {
   DocumentRecord,
   M11Section,
   M11SectionRevision,
+  ReadinessRecord,
 } from "../api/types";
 import {
   READINESS_REVIEW_INCOMPLETE,
@@ -12,6 +13,7 @@ import {
   REVISION_REVIEW_COMPARISON,
   readinessForReview,
   readinessFromWorkspace,
+  readinessViewFromApi,
   revisionRowsForReview,
   revisionViewFromApi,
   type GovernanceReviewState,
@@ -178,5 +180,66 @@ describe("governance review models", () => {
         (issue) => issue.state === "retrying",
       ),
     ).toBe(true);
+  });
+
+  it("maps a stored snapshot including retry-check", () => {
+    const unchecked: ReadinessRecord = {
+      checked: false,
+      ready: false,
+      stale: false,
+      job_id: null,
+      computed_at: null,
+      protocol_title: "AURORA-301",
+      protocol_id: conversation.id,
+      summary: {
+        total_sections: 0,
+        done_sections: 0,
+        draft_sections: 0,
+        ready_sources: 0,
+        pending_sources: 0,
+        failed_sources: 0,
+        latest_activity: null,
+        citations: null,
+      },
+      issues: [],
+      sections: [],
+    };
+    const empty = readinessViewFromApi(unchecked);
+    expect(empty.ready).toBe(false);
+    expect(empty.issues).toEqual([]);
+    expect(empty.sections).toEqual([]);
+    expect(empty.summary.doneSections).toBe(0);
+
+    const mapped = readinessViewFromApi({
+      ...unchecked,
+      checked: true,
+      ready: false,
+      issues: [
+        {
+          id: "stale-check",
+          title: "Protocol changed since last check",
+          detail: "Run the check again.",
+          severity: "warning",
+          code: "stale_check",
+          action: "retry-check",
+          action_label: "Check again",
+          section_number: null,
+        },
+      ],
+      summary: {
+        total_sections: 14,
+        done_sections: 13,
+        draft_sections: 1,
+        ready_sources: 1,
+        pending_sources: 0,
+        failed_sources: 0,
+        latest_activity: "2026-08-15T12:00:00Z",
+        citations: { resolved: 1, needing_review: 0 },
+      },
+    });
+    expect(mapped.ready).toBe(false);
+    expect(mapped.issues[0]?.id).toBe("stale-check");
+    expect(mapped.issues[0]?.action).toBe("retry-check");
+    expect(mapped.summary.doneSections).toBe(13);
   });
 });

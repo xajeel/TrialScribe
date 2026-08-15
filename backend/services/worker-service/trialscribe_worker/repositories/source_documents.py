@@ -5,13 +5,22 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trialscribe_worker.models.source_document import SourceDocument
+from trialscribe_worker.models.source_document import (
+    SourceDocument,
+    SourceDocumentMetadata,
+)
 
 _GET_SCOPED = text(
     "SELECT id, organization_id, conversation_id, kind, content_type, status, "
     "error, content FROM trialscribe.documents WHERE id = :document_id "
     "AND organization_id = :organization_id "
     "AND conversation_id = :conversation_id"
+)
+_LIST_METADATA = text(
+    "SELECT id, filename, status, updated_at FROM trialscribe.documents "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id "
+    "ORDER BY filename"
 )
 _MARK_STATUS = text(
     "UPDATE trialscribe.documents SET status = :status, error = :error, "
@@ -56,6 +65,32 @@ class SourceDocumentRepository:
             error=row["error"],
             content=bytes(row["content"]),
         )
+
+    async def list_metadata(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[SourceDocumentMetadata]:
+        """List upload status without loading file bytes."""
+
+        result = await self._session.execute(
+            _LIST_METADATA,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        rows: list[SourceDocumentMetadata] = []
+        for row in result.mappings():
+            rows.append(
+                SourceDocumentMetadata(
+                    id=row["id"],
+                    filename=row["filename"],
+                    status=row["status"],
+                    updated_at=row["updated_at"],
+                )
+            )
+        return rows
 
     async def mark_status(
         self,
