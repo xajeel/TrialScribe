@@ -67,3 +67,21 @@ class M11SectionRevisionRepository:
         items = result[:limit]
         next_after_revision = items[-1].revision_number if has_more and items else None
         return items, next_after_revision
+
+    async def get_scoped(
+        self,
+        section_id: UUID,
+        conversation_id: UUID,
+        organization_id: UUID,
+        revision_number: int,
+    ) -> M11SectionRevision | None:
+        """Load one snapshot for this section, conversation, and tenant."""
+
+        return await self._session.scalar(
+            select(M11SectionRevision).where(
+                M11SectionRevision.section_id == section_id,
+                M11SectionRevision.conversation_id == conversation_id,
+                M11SectionRevision.organization_id == organization_id,
+                M11SectionRevision.revision_number == revision_number,
+            )
+        )

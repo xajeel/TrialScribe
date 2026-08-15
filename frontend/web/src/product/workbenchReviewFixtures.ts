@@ -67,6 +67,7 @@ function controller(
     upload: () => Promise.resolve(false),
     removeDocument: () => Promise.resolve(false),
     saveSection: () => Promise.resolve(false),
+    restore: () => Promise.resolve(false),
     markDone: () => Promise.resolve(false),
     reopen: () => Promise.resolve(false),
   };

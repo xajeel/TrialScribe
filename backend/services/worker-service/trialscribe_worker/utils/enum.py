@@ -60,6 +60,7 @@ class GenerationErrorCode(StrEnum):
     EMPTY_OUTPUT = "empty_output"
     PROVIDER_FAILED = "provider_failed"
     REVISION_CONFLICT = "revision_conflict"
+    INVALID_SELECTION = "invalid_selection"
 
 
 class ProviderName(StrEnum):

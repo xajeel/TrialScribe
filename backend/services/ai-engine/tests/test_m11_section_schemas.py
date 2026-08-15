@@ -104,4 +104,6 @@ def test_response_contract_accepts_orm_shaped_values_and_enums_serialize() -> No
 
     assert response.status is M11SectionStatus.DRAFT
     assert M11RevisionAction.REOPENED.value == "reopened"
+    assert M11RevisionAction.GENERATED.value == "generated"
+    assert M11RevisionAction.RESTORED.value == "restored"
     assert response.model_dump(mode="json")["status"] == "draft"

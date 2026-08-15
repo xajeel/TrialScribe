@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type SyntheticEvent } from "react";
 
 import type { AuthoringWorkspaceController } from "../workspace/useAuthoringWorkspace";
 import { EmptyState, ErrorState, LoadingState } from "./AsyncState";
@@ -36,13 +36,18 @@ function relativeTime(isoDate: string): string {
  */
 export function AuthoringPane({
   workspace,
+  onRewrite,
+  rewriteBusy = false,
 }: {
   workspace: AuthoringWorkspaceController;
+  onRewrite?: (selection: { start: number; end: number } | null) => void;
+  rewriteBusy?: boolean;
 }) {
   const [view, setView] = useState<CentreView>("document");
   const [instruction, setInstruction] = useState("");
   const [sectionInstructions, setSectionInstructions] = useState("");
   const [sectionContent, setSectionContent] = useState("");
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const section = workspace.selectedSection;
 
   useEffect(() => {
@@ -70,7 +75,7 @@ export function AuthoringPane({
     section !== null &&
     (sectionInstructions !== section.instructions ||
       sectionContent !== section.content);
-  const busy = workspace.action !== "idle";
+  const busy = workspace.action !== "idle" || rewriteBusy;
   const done = section?.status === "done";
   const total = workspace.sections.length;
   const complete = workspace.sections.filter(
@@ -248,6 +253,15 @@ export function AuthoringPane({
                 className="workbench-paper__prose"
                 value={sectionContent}
                 onChange={(event) => setSectionContent(event.target.value)}
+                onSelect={(event: SyntheticEvent<HTMLTextAreaElement>) => {
+                  if (document.activeElement !== event.currentTarget) {
+                    return;
+                  }
+                  setSelection({
+                    start: event.currentTarget.selectionStart,
+                    end: event.currentTarget.selectionEnd,
+                  });
+                }}
                 rows={16}
                 disabled={busy || done}
                 placeholder="Draft the complete section here…"
@@ -362,6 +376,26 @@ export function AuthoringPane({
                 >
                   {workspace.action === "saving" ? "Saving…" : "Save section"}
                 </button>
+                {onRewrite !== undefined && (
+                  <button
+                    type="button"
+                    className="workbench-button"
+                    aria-label="Rewrite section"
+                    disabled={sectionChanged || busy}
+                    title={
+                      sectionChanged
+                        ? "Save changes before rewriting"
+                        : undefined
+                    }
+                    onClick={() =>
+                      onRewrite(
+                        selection.end > selection.start ? selection : null,
+                      )
+                    }
+                  >
+                    Rewrite
+                  </button>
+                )}
                 <button
                   type="button"
                   className="workbench-button workbench-button--primary"

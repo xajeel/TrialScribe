@@ -94,6 +94,28 @@ export function reopenM11Section(
   );
 }
 
+/** Copy a numbered snapshot onto the current draft. */
+export function restoreM11Section(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+  sectionNumber: string,
+  expectedRevision: number,
+  revisionNumber: number,
+): Promise<M11Section> {
+  return fetcher<M11Section>(
+    `${sectionPath(conversationId, sectionNumber)}/restore`,
+    {
+      method: "POST",
+      headers: organizationHeaders(organizationId),
+      json: {
+        expected_revision: expectedRevision,
+        revision_number: revisionNumber,
+      },
+    },
+  );
+}
+
 /** Read one section's immutable revision snapshots with cursor pagination. */
 export function listM11SectionRevisions(
   fetcher: AuthorizedFetch,

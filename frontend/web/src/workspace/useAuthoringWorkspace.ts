@@ -18,6 +18,7 @@ import {
   initializeM11Workspace,
   markM11SectionDone,
   reopenM11Section,
+  restoreM11Section,
   reviseM11Section,
 } from "../api/m11Sections";
 import type {
@@ -38,7 +39,8 @@ export type WorkspaceAction =
   | "uploading"
   | "removing"
   | "saving"
-  | "transitioning";
+  | "transitioning"
+  | "restoring";
 
 export interface WorkspaceFeedback {
   kind: "success" | "error";
@@ -69,6 +71,7 @@ export interface AuthoringWorkspaceController {
   upload: (kind: DocumentKind, file: File) => Promise<boolean>;
   removeDocument: (documentId: string) => Promise<boolean>;
   saveSection: (instructions: string, content: string) => Promise<boolean>;
+  restore: (revisionNumber: number) => Promise<boolean>;
   markDone: () => Promise<boolean>;
   reopen: () => Promise<boolean>;
 }
@@ -80,6 +83,7 @@ const PUBLIC_FAILURES = {
   upload: "Could not upload the document. Check the file and try again.",
   remove: "Could not remove the document. Please try again.",
   section: "Could not save the section. Reload it and try again.",
+  restore: "Could not restore the snapshot. Please try again.",
   transition: "Could not change the section status. Please try again.",
 } as const;
 
@@ -569,6 +573,62 @@ export function useAuthoringWorkspace(
     ],
   );
 
+  const restore = useCallback(
+    async (revisionNumber: number): Promise<boolean> => {
+      if (
+        organizationId === null ||
+        selectedConversationId === null ||
+        selectedSection === null ||
+        selectedSection.status !== "draft" ||
+        action !== "idle"
+      ) {
+        return false;
+      }
+      const expectedOrganization = organizationId;
+      const expectedConversation = selectedConversationId;
+      const section = selectedSection;
+      setAction("restoring");
+      setFeedback(null);
+      try {
+        const updated = await restoreM11Section(
+          fetcher,
+          expectedOrganization,
+          expectedConversation,
+          section.section_number,
+          section.current_revision,
+          revisionNumber,
+        );
+        if (!contextIsCurrent(expectedOrganization, expectedConversation)) {
+          return false;
+        }
+        replaceSection(updated);
+        setFeedback({
+          kind: "success",
+          message: "Earlier snapshot restored.",
+        });
+        return true;
+      } catch {
+        if (contextIsCurrent(expectedOrganization, expectedConversation)) {
+          setFeedback({ kind: "error", message: PUBLIC_FAILURES.restore });
+        }
+        return false;
+      } finally {
+        if (contextIsCurrent(expectedOrganization, expectedConversation)) {
+          setAction("idle");
+        }
+      }
+    },
+    [
+      action,
+      contextIsCurrent,
+      fetcher,
+      organizationId,
+      replaceSection,
+      selectedConversationId,
+      selectedSection,
+    ],
+  );
+
   const transitionSection = useCallback(
     async (next: "done" | "draft"): Promise<boolean> => {
       if (
@@ -665,6 +725,7 @@ export function useAuthoringWorkspace(
     upload,
     removeDocument,
     saveSection,
+    restore,
     markDone,
     reopen,
   };

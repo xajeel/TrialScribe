@@ -62,3 +62,14 @@ class GenerationAttemptPublic(BaseModel):
 
 class GenerationAttemptListResponse(BaseModel):
     items: list[GenerationAttemptPublic]
+
+
+class RewriteOptionPublic(BaseModel):
+    """One proposed wording. Prompts are never included."""
+
+    id: str
+    text: str
+
+
+class RewriteOptionListResponse(BaseModel):
+    items: list[RewriteOptionPublic]

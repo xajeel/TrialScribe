@@ -29,6 +29,7 @@ from trialscribe_ai.schemas.m11_section import (
     M11CatalogSectionResponse,
     M11RevisionPageQuery,
     M11SectionResponse,
+    M11SectionRestoreRequest,
     M11SectionReviseRequest,
     M11SectionRevisionPageResponse,
     M11SectionRevisionResponse,
@@ -215,6 +216,32 @@ async def reopen_m11_section(
             conversation_id,
             section_number,
             expected_revision=body.expected_revision,
+            now=now,
+        )
+    return _section_response(section)
+
+
+@router.post(
+    "/conversations/{conversation_id}/m11-sections/{section_number}/restore",
+    response_model=M11SectionResponse,
+)
+async def restore_m11_section(
+    conversation_id: UUID,
+    section_number: str,
+    body: M11SectionRestoreRequest,
+    account_id: AccountId,
+    organization_id: OrganizationId,
+    runtime: Runtime,
+    now: Now,
+) -> M11SectionResponse:
+    async with runtime.transaction() as session:
+        section = await _service(session).restore_section(
+            organization_id,
+            account_id,
+            conversation_id,
+            section_number,
+            expected_revision=body.expected_revision,
+            revision_number=body.revision_number,
             now=now,
         )
     return _section_response(section)

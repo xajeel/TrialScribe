@@ -66,7 +66,7 @@ async def assert_current_capabilities(settings: DatabaseSettings) -> None:
             vector_version = await session.scalar(
                 text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
             )
-        assert revision == "0014_section_generation_attempts"
+        assert revision == "0015_m11_revision_actions"
         assert schema_exists is True
         assert vector_version is not None
     finally:

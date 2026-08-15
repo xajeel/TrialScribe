@@ -52,6 +52,9 @@ describe("governance review pages", () => {
     await user.click(await screen.findByRole("button", { name: "Restore as revision 8" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Stored history was not changed");
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/restore")),
+    ).toBe(false);
   });
 
   it("opens readiness attention, filtered, ready, and retry states directly", async () => {

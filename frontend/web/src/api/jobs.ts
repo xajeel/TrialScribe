@@ -4,6 +4,7 @@ import type {
   GenerationAttemptList,
   JobList,
   JobRecord,
+  RewriteOptionList,
 } from "./types";
 
 export const GENERATE_SECTIONS_JOB_KIND = "generate_sections";
@@ -82,6 +83,17 @@ export function listJobAttempts(
   jobId: string,
 ): Promise<GenerationAttemptList> {
   return fetcher<GenerationAttemptList>(`${jobPath(jobId)}/attempts`, {
+    headers: organizationHeaders(organizationId),
+  });
+}
+
+/** Read rewrite option texts for one succeeded rewrite job. */
+export function listRewriteOptions(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  jobId: string,
+): Promise<RewriteOptionList> {
+  return fetcher<RewriteOptionList>(`${jobPath(jobId)}/rewrite-options`, {
     headers: organizationHeaders(organizationId),
   });
 }

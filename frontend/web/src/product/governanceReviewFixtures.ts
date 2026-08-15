@@ -151,7 +151,11 @@ export function revisionViewFromApi(
       ? "marked-done"
       : revision.action === "reopened"
         ? "reopened"
-        : "edited";
+        : revision.action === "generated"
+          ? "generated"
+          : revision.action === "restored"
+            ? "restored"
+            : "edited";
   const authorLabel =
     revision.author_account_id === null
       ? "System"

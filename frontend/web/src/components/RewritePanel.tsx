@@ -25,6 +25,7 @@ export interface RewritePanelProps {
   onRevise: () => void;
   onKeepOriginal: () => void;
   onClose: () => void;
+  live?: boolean;
 }
 
 function AlternativeCard({
@@ -106,6 +107,7 @@ export function RewritePanel({
   onRevise,
   onKeepOriginal,
   onClose,
+  live = false,
 }: RewritePanelProps) {
   const [error, setError] = useState<string | null>(null);
   const titleId = useId();
@@ -152,10 +154,12 @@ export function RewritePanel({
         </button>
       </header>
 
-      <p className="rewrite-panel__fixture-note" role="note">
-        Review fixture — alternatives demonstrate the planned interaction and
-        are not produced or saved by the product.
-      </p>
+      {!live && (
+        <p className="rewrite-panel__fixture-note" role="note">
+          Review fixture — alternatives demonstrate the planned interaction and
+          are not produced or saved by the product.
+        </p>
+      )}
 
       {stage === "alternatives" ? (
         <div className="rewrite-panel__alternatives">

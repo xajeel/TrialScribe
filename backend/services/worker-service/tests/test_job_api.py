@@ -143,6 +143,7 @@ class FakeGenerationOutcomeRepository:
     """Stand in for the raw-SQL attempt reader."""
 
     rows: list[GenerationAttemptOutcome] = []
+    options: list[tuple[str, str]] = []
     calls: list[tuple[UUID, UUID, UUID]] = []
 
     def __init__(self, _session: Any) -> None:
@@ -156,6 +157,15 @@ class FakeGenerationOutcomeRepository:
     ) -> list[GenerationAttemptOutcome]:
         type(self).calls.append((organization_id, conversation_id, job_id))
         return list(type(self).rows)
+
+    async def get_rewrite_options(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        job_id: UUID,
+    ) -> list[tuple[str, str]]:
+        type(self).calls.append((organization_id, conversation_id, job_id))
+        return list(type(self).options)
 
 
 class FakeOutbox:
@@ -196,6 +206,7 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeJobRepository.jobs = {}
     FakeOutbox.stored = []
     FakeGenerationOutcomeRepository.rows = []
+    FakeGenerationOutcomeRepository.options = []
     FakeGenerationOutcomeRepository.calls = []
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
@@ -482,3 +493,73 @@ def test_attempts_return_the_latest_public_fields_only(api: dict[str, Any]) -> N
     assert FakeGenerationOutcomeRepository.calls == [
         (ORGANIZATION_ID, CONVERSATION_ID, UUID(created["id"]))
     ]
+
+
+def test_rewrite_options_for_a_generate_job_are_empty(api: dict[str, Any]) -> None:
+    created = api["client"].post(
+        "/jobs",
+        json={
+            "kind": GENERATE_SECTIONS_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {
+                "section_numbers": ["5"],
+                "expected_revisions": {"5": 0},
+            },
+        },
+        headers=HEADERS,
+    ).json()
+
+    response = api["client"].get(
+        f"/jobs/{created['id']}/rewrite-options",
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+    assert FakeGenerationOutcomeRepository.calls == [
+        (ORGANIZATION_ID, CONVERSATION_ID, UUID(created["id"]))
+    ]
+
+
+def test_rewrite_options_return_two_texts_without_prompts(api: dict[str, Any]) -> None:
+    created = api["client"].post(
+        "/jobs",
+        json={
+            "kind": GENERATE_SECTIONS_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {
+                "section_numbers": ["5"],
+                "expected_revisions": {"5": 0},
+            },
+        },
+        headers=HEADERS,
+    ).json()
+    FakeGenerationOutcomeRepository.options = [
+        ("alternative-1", "Keep the same length."),
+        ("alternative-2", "Tighten the wording."),
+    ]
+
+    response = api["client"].get(
+        f"/jobs/{created['id']}/rewrite-options",
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {"id": "alternative-1", "text": "Keep the same length."},
+            {"id": "alternative-2", "text": "Tighten the wording."},
+        ]
+    }
+    assert "prompt" not in response.text
+    assert FakeGenerationOutcomeRepository.calls == [
+        (ORGANIZATION_ID, CONVERSATION_ID, UUID(created["id"]))
+    ]
+
+
+def test_rewrite_options_for_an_unknown_job_are_not_found(api: dict[str, Any]) -> None:
+    response = api["client"].get(f"/jobs/{uuid4()}/rewrite-options", headers=HEADERS)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "job not found"}
+    assert FakeGenerationOutcomeRepository.calls == []

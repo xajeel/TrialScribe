@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { restoreM11Section } from "../api/m11Sections";
 import { useAuth } from "../auth/useAuth";
 import {
   EMPTY_REVISION_FILTERS,
@@ -122,6 +123,10 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
   );
   const [restoreOpener, setRestoreOpener] = useState<HTMLElement | null>(null);
   const [restored, setRestored] = useState(review === "restored");
+  const [restorePending, setRestorePending] = useState(false);
+  const canRestore =
+    reviewing ||
+    (activeSection !== null && activeSection.status === "draft");
 
   const comparison = useMemo<RevisionComparisonView | null>(() => {
     if (compareRevision === null) return null;
@@ -161,6 +166,46 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
   const openRestore = (revision: RevisionRowView, opener: HTMLElement) => {
     setRestoreRevision(revision);
     setRestoreOpener(opener);
+  };
+  const confirmRestore = () => {
+    if (reviewing) {
+      setRestoreRevision(null);
+      setCompareRevision(null);
+      setRestored(true);
+      return;
+    }
+    if (
+      restorePending ||
+      liveOrganization === null ||
+      liveConversationId === null ||
+      activeSection === null ||
+      restoreRevision === null
+    ) {
+      return;
+    }
+    const organizationId = liveOrganization.id;
+    const conversationId = liveConversationId;
+    const sectionNumber = activeSection.section_number;
+    const expectedRevision = activeSection.current_revision;
+    const revisionNumber = restoreRevision.revisionNumber;
+    setRestorePending(true);
+    void restoreM11Section(
+      authorizedFetch,
+      organizationId,
+      conversationId,
+      sectionNumber,
+      expectedRevision,
+      revisionNumber,
+    )
+      .then(() => {
+        setRestoreRevision(null);
+        setCompareRevision(null);
+        overview.retry();
+        history.retry();
+      })
+      .finally(() => {
+        setRestorePending(false);
+      });
   };
 
   return (
@@ -249,7 +294,7 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
               returnFocusTo={previewOpener}
               onClose={() => setPreview(null)}
               onCompare={rows.length > 1 ? openComparison : undefined}
-              onRestore={reviewing ? openRestore : undefined}
+              onRestore={canRestore ? openRestore : undefined}
             />
           </>
         ) : (
@@ -260,7 +305,7 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
             onBack={() => setCompareRevision(null)}
             onKeepCurrent={() => setCompareRevision(null)}
             onRestore={
-              reviewing
+              canRestore
                 ? (opener) => openRestore(comparison.earlier, opener)
                 : undefined
             }
@@ -271,14 +316,17 @@ export function RevisionsPage({ review }: { review?: RevisionsReview } = {}) {
         <RestoreRevisionDialog
           open
           revision={restoreRevision}
-          newRevisionNumber={8}
+          newRevisionNumber={
+            reviewing ? 8 : (activeSection?.current_revision ?? 0) + 1
+          }
+          pending={restorePending}
           returnFocusTo={restoreOpener}
-          onCancel={() => setRestoreRevision(null)}
-          onConfirm={() => {
-            setRestoreRevision(null);
-            setCompareRevision(null);
-            setRestored(true);
+          onCancel={() => {
+            if (!restorePending) {
+              setRestoreRevision(null);
+            }
           }}
+          onConfirm={confirmRestore}
         />
       )}
     </div>
