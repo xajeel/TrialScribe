@@ -227,6 +227,23 @@ describe("App", () => {
       if (url.includes("/v1/ai/conversations/conversation-1")) {
         return jsonResponse(200, conversation);
       }
+      if (url.includes("/v1/jobs/usage")) {
+        return jsonResponse(200, {
+          protocol_title: conversation.title,
+          protocol_id: conversation.id,
+          summary: {
+            total_cost_micros: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            successful_jobs: 0,
+            failed_or_cancelled: 0,
+            generation_count: 0,
+            pricing_basis: "Versioned provider pricing",
+            updated_at: null,
+          },
+          generations: [],
+        });
+      }
       return jsonResponse(404, { detail: "Not found" });
     });
 
@@ -288,8 +305,8 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "Usage and cost" }),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(/provider usage records are not connected/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/provider usage records are not connected/i),
+    ).not.toBeInTheDocument();
   });
 
   it("restores a live snapshot onto the current draft", async () => {

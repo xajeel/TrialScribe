@@ -117,7 +117,7 @@ describe("AuthoringPane rewrite control", () => {
     const { rerender } = render(
       <AuthoringPane workspace={workspace()} onRewrite={onRewrite} />,
     );
-    const textarea = screen.getByLabelText("Section content");
+    const textarea = screen.getByLabelText("Section content") as HTMLTextAreaElement;
     await user.click(textarea);
     (textarea as HTMLTextAreaElement).setSelectionRange(0, 7);
     fireEvent.select(textarea);

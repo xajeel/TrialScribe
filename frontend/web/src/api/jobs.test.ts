@@ -10,6 +10,7 @@ import {
   createJob,
   getJob,
   getReadiness,
+  getUsage,
   listJobAttempts,
   listJobs,
   listRewriteOptions,
@@ -100,6 +101,15 @@ describe("jobs api", () => {
 
     expect(calls[0]?.path).toBe(`/v1/jobs/${JOB_ID}/cancel`);
     expect(calls[0]?.options?.method).toBe("POST");
+  });
+
+  it("reads usage with conversation_id", async () => {
+    const { fetcher, calls } = capturingFetcher();
+
+    await getUsage(fetcher, ORGANIZATION_ID, CONVERSATION_ID);
+
+    expect(calls[0]?.path).toContain("/v1/jobs/usage?");
+    expect(calls[0]?.path).toContain(`conversation_id=${CONVERSATION_ID}`);
   });
 
   it("reads readiness with conversation_id", async () => {

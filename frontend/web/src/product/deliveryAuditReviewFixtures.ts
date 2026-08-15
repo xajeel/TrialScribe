@@ -1,4 +1,4 @@
-import type { Conversation, M11Section, M11SectionStatus } from "../api/types";
+import type { Conversation, M11Section, M11SectionStatus, UsageRecord } from "../api/types";
 import {
   MIXED_SECTIONS,
   REVIEW_CONVERSATION,
@@ -392,3 +392,61 @@ export const REVIEW_USAGE_EMPTY = emptyUsageView(
   REVIEW_CONVERSATION.title,
   "Development review data — no stored usage was read.",
 );
+
+const USAGE_OUTCOMES: ReadonlySet<UsageOutcome> = new Set([
+  "complete",
+  "issue",
+  "failed",
+  "cancelled",
+  "running",
+]);
+
+function usageOutcome(value: string): UsageOutcome {
+  return USAGE_OUTCOMES.has(value as UsageOutcome)
+    ? (value as UsageOutcome)
+    : "running";
+}
+
+/** Map a stored usage snapshot into the Usage sheet view. */
+export function usageViewFromApi(record: UsageRecord): UsageView {
+  return {
+    protocolId: record.protocol_id,
+    protocolTitle: record.protocol_title,
+    summary: {
+      totalCostMicros: record.summary.total_cost_micros,
+      inputTokens: record.summary.input_tokens,
+      outputTokens: record.summary.output_tokens,
+      successfulJobs: record.summary.successful_jobs,
+      failedOrCancelled: record.summary.failed_or_cancelled,
+      generationCount: record.summary.generation_count,
+      pricingBasis: record.summary.pricing_basis,
+      updatedAt: record.summary.updated_at,
+    },
+    generations: record.generations.map((item) => ({
+      id: item.id,
+      jobId: item.job_id,
+      scope: item.scope,
+      sectionNumbers: item.section_numbers,
+      requester: item.requester,
+      model: item.model,
+      inputTokens: item.input_tokens,
+      outputTokens: item.output_tokens,
+      latencyMs: item.latency_ms,
+      outcome: usageOutcome(item.outcome),
+      costMicros: item.cost_micros,
+      pricingVersion: item.pricing_version,
+      startedAt: item.started_at ?? "",
+      completedAt: item.completed_at,
+      providerCalls: item.provider_calls.map((call) => ({
+        id: call.id,
+        stage: call.stage,
+        model: call.model,
+        inputTokens: call.input_tokens,
+        outputTokens: call.output_tokens,
+        latencyMs: call.latency_ms,
+        result: call.result,
+        costMicros: call.cost_micros,
+      })),
+    })),
+  };
+}

@@ -215,6 +215,53 @@ export interface RewriteOptionList {
   items: RewriteOptionRecord[];
 }
 
+export interface UsageCallRecord {
+  id: string;
+  stage: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+  result: string;
+  cost_micros: number;
+}
+
+export interface UsageGenerationRecord {
+  id: string;
+  job_id: string;
+  scope: string;
+  section_numbers: string[];
+  requester: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number | null;
+  outcome: string;
+  cost_micros: number | null;
+  pricing_version: string;
+  started_at: string | null;
+  completed_at: string | null;
+  provider_calls: UsageCallRecord[];
+}
+
+export interface UsageSummaryRecord {
+  total_cost_micros: number;
+  input_tokens: number;
+  output_tokens: number;
+  successful_jobs: number;
+  failed_or_cancelled: number;
+  generation_count: number;
+  pricing_basis: string;
+  updated_at: string | null;
+}
+
+export interface UsageRecord {
+  protocol_title: string;
+  protocol_id: string;
+  summary: UsageSummaryRecord;
+  generations: UsageGenerationRecord[];
+}
+
 export interface ReadinessCitationRecord {
   resolved: number;
   needing_review: number;

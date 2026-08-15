@@ -27,6 +27,7 @@ from trialscribe_worker.api.dependencies import (
 from trialscribe_worker.repositories.generation_outcomes import GenerationOutcomeRepository
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
+from trialscribe_worker.repositories.provider_calls import ProviderCallRepository
 from trialscribe_worker.repositories.protocol_readiness import ProtocolReadinessRepository
 from trialscribe_worker.schemas.job import (
     GenerationAttemptListResponse,
@@ -41,8 +42,10 @@ from trialscribe_worker.schemas.job import (
     ReadinessSummaryPublic,
     RewriteOptionListResponse,
     RewriteOptionPublic,
+    UsageResponse,
 )
 from trialscribe_worker.services.jobs import JobService
+from trialscribe_worker.services.usage import build_usage_view
 from trialscribe_worker.utils.constant import (
     CONVERSATION_NOT_FOUND_DETAIL,
     JOB_LIST_DEFAULT_LIMIT,
@@ -273,6 +276,50 @@ async def read_readiness(
             ReadinessSectionPublic.model_validate(item) for item in row["sections"]
         ],
     )
+
+
+@router.get("/usage", response_model=UsageResponse)
+async def read_usage(
+    organization_id: OrganizationId,
+    account_id: AccountId,
+    runtime: Runtime,
+    conversation_id: Annotated[UUID, Query()],
+) -> UsageResponse:
+    async with runtime.transaction() as session:
+        calls = ProviderCallRepository(session)
+        jobs = JobRepository(session)
+        conversation = await calls.get_conversation(organization_id, conversation_id)
+        if conversation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=CONVERSATION_NOT_FOUND_DETAIL,
+            )
+        title, _activity = conversation
+        totals = await calls.summarize_conversation(organization_id, conversation_id)
+        records = await calls.list_for_conversation(organization_id, conversation_id)
+        job_ids = list(
+            dict.fromkeys(record.job_id for record in records if record.job_id is not None)
+        )
+        loaded = await jobs.list_usage_jobs(organization_id, conversation_id, job_ids)
+        in_flight = await jobs.list_in_flight_usage_jobs(
+            organization_id,
+            conversation_id,
+        )
+        merged = list(loaded)
+        seen = {job.id for job in merged}
+        for job in in_flight:
+            if job.id not in seen:
+                merged.append(job)
+                seen.add(job.id)
+        view = build_usage_view(
+            protocol_title=title,
+            protocol_id=conversation_id,
+            viewer_account_id=account_id,
+            jobs=merged,
+            calls=records,
+            summary=totals,
+        )
+    return UsageResponse.model_validate(view)
 
 
 @router.get("/{job_id}", response_model=JobResponse)
