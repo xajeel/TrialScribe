@@ -122,17 +122,34 @@ GENERATE_CONTENT_MAX_LENGTH = 200000
 GENERATE_EVIDENCE_CHARS = 8000
 GENERATE_SECTIONS_PARAMETER = "section_numbers"
 GENERATE_EXPECTED_REVISIONS_PARAMETER = "expected_revisions"
+GENERATE_MODE_PARAMETER = "mode"
+GENERATE_MODE_GENERATE = "generate"
+GENERATE_MODE_REWRITE = "rewrite"
+REWRITE_INSTRUCTION_PARAMETER = "rewrite_instruction"
+REWRITE_SELECTION_START_PARAMETER = "selection_start"
+REWRITE_SELECTION_END_PARAMETER = "selection_end"
+REWRITE_KEEP_CITATIONS_PARAMETER = "keep_citations"
+REWRITE_USE_SOURCES_PARAMETER = "use_sources"
+REWRITE_INSTRUCTION_MAX_LENGTH = 2000
+REWRITE_ALTERNATIVE_COUNT = 2
+REWRITE_OPTIONS_KIND = "rewrite_options"
+REWRITE_VARIANT_HINTS: tuple[str, ...] = (
+    "Keep a similar length.",
+    "Tighten the wording.",
+)
 GENERATE_SECTION_NUMBERS: frozenset[str] = frozenset(
     {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"}
 )
 M11_SECTION_DRAFT_STATUS = "draft"
 M11_SECTION_DONE_STATUS = "done"
 M11_REVISION_ACTION_REVISED = "revised"
+M11_REVISION_ACTION_GENERATED = "generated"
 GENERATION_ATTEMPT_INDEX = "ix_section_generation_attempts_scope"
 GENERATION_ATTEMPT_STATUS_CHECK = "status IN ('succeeded', 'failed', 'skipped')"
 GENERATION_ATTEMPT_ERROR_CHECK = (
     "error_code IS NULL OR error_code IN ("
-    "'missing_section', 'empty_output', 'provider_failed', 'revision_conflict')"
+    "'missing_section', 'empty_output', 'provider_failed', "
+    "'revision_conflict', 'invalid_selection')"
 )
 GENERATION_ATTEMPT_ATTEMPT_CHECK = "attempt >= 1"
 GENERATE_SYSTEM_PROMPT = (

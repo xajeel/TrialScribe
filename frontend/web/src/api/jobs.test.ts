@@ -10,6 +10,7 @@ import {
   getJob,
   listJobAttempts,
   listJobs,
+  listRewriteOptions,
 } from "./jobs";
 
 const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000010";
@@ -82,9 +83,11 @@ describe("jobs api", () => {
 
     await getJob(fetcher, ORGANIZATION_ID, JOB_ID);
     await listJobAttempts(fetcher, ORGANIZATION_ID, JOB_ID);
+    await listRewriteOptions(fetcher, ORGANIZATION_ID, JOB_ID);
 
     expect(calls[0]?.path).toBe(`/v1/jobs/${JOB_ID}`);
     expect(calls[1]?.path).toBe(`/v1/jobs/${JOB_ID}/attempts`);
+    expect(calls[2]?.path).toBe(`/v1/jobs/${JOB_ID}/rewrite-options`);
   });
 
   it("cancels a job with a POST to /cancel", async () => {

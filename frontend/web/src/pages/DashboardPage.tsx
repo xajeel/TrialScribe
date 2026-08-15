@@ -7,16 +7,24 @@ import { AccountMenu } from "../components/AccountMenu";
 import { AuthoringPane } from "../components/AuthoringPane";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import { BrandLogo } from "../components/BrandLogo";
+import { ComparePanel, type CompareView } from "../components/ComparePanel";
 import { ConversationPane } from "../components/ConversationPane";
 import { ResourcePane } from "../components/ResourcePane";
+import { RewritePanel } from "../components/RewritePanel";
 import { SectionReader } from "../components/SectionReader";
 import { useOrganization } from "../org/useOrganization";
-import { useAuthoringWorkspace } from "../workspace/useAuthoringWorkspace";
+import type {
+  RewriteAlternative,
+  RewriteReviewStage,
+} from "../product/evidenceRewriteReviewFixtures";
 import {
   reviewWorkbench,
   type WorkbenchReview,
 } from "../product/workbenchReviewFixtures";
 import { REVIEW_WORKSPACE_ORGANIZATION } from "../product/workspaceReviewFixtures";
+import { liveRewriteFixture } from "../rewrite/liveFixture";
+import { useAuthoringWorkspace } from "../workspace/useAuthoringWorkspace";
+import { useSectionRewrite } from "../workspace/useSectionRewrite";
 import { OrganizationSetupPage } from "./OrganizationSetupPage";
 
 type Pane = "protocols" | "resources";
@@ -49,6 +57,29 @@ export function DashboardPage({
   );
   const sample = reviewing ? reviewWorkbench(review) : null;
   const workspace = sample ?? live;
+  const rewrite = useSectionRewrite({
+    organizationId: reviewing ? null : (liveActive?.id ?? null),
+    conversationId: reviewing ? null : workspace.selectedConversationId,
+    section: reviewing ? null : workspace.selectedSection,
+    fetcher: authorizedFetch,
+    enabled: !reviewing && workspace.workspaceStatus === "ready",
+  });
+  const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [rewriteStage, setRewriteStage] = useState<
+    Extract<RewriteReviewStage, "selection" | "whole" | "alternatives">
+  >("whole");
+  const [rewriteSelection, setRewriteSelection] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
+  const [rewriteOriginal, setRewriteOriginal] = useState("");
+  const [rewriteInstruction, setRewriteInstruction] = useState("");
+  const [keepCitations, setKeepCitations] = useState(true);
+  const [useSources, setUseSources] = useState(true);
+  const [selectedAlternativeId, setSelectedAlternativeId] =
+    useState<RewriteAlternative["id"]>("alternative-1");
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareView, setCompareView] = useState<CompareView>("side-by-side");
 
   const readerSection = useMemo(
     () => workspace.sections.find((item) => item.id === readerSectionId) ?? null,
@@ -58,6 +89,8 @@ export function DashboardPage({
   useEffect(() => {
     setReaderSectionId(null);
     setReaderOpener(null);
+    setRewriteOpen(false);
+    setCompareOpen(false);
   }, [workspace.selectedConversationId]);
 
   useEffect(() => {
@@ -89,6 +122,38 @@ export function DashboardPage({
     setReaderOpener(null);
   }, []);
 
+  const closeRewrite = useCallback(() => {
+    rewrite.keepOriginal();
+    setRewriteOpen(false);
+    setCompareOpen(false);
+  }, [rewrite]);
+
+  const openRewrite = useCallback(
+    (selection: { start: number; end: number } | null) => {
+      const current = workspace.selectedSection;
+      if (current === null || current.status === "done") {
+        return;
+      }
+      setRewriteOriginal(current.content);
+      setRewriteSelection(selection);
+      setRewriteStage(selection === null ? "whole" : "selection");
+      setRewriteInstruction("");
+      setKeepCitations(true);
+      setUseSources(true);
+      setSelectedAlternativeId("alternative-1");
+      setCompareOpen(false);
+      setRewriteOpen(true);
+    },
+    [workspace.selectedSection],
+  );
+
+  useEffect(() => {
+    if (rewrite.options.length > 0) {
+      setRewriteStage("alternatives");
+      setSelectedAlternativeId("alternative-1");
+    }
+  }, [rewrite.options]);
+
   if (ready && !memberOfOrg && !reviewing) {
     return <OrganizationSetupPage />;
   }
@@ -96,6 +161,28 @@ export function DashboardPage({
   const protocol = workspace.selectedConversation;
   const routeId = conversationId ?? protocol?.id ?? "";
   const saving = workspace.action === "saving";
+  const rewriteSection = workspace.selectedSection;
+  const rewriteFixture =
+    rewriteSection === null
+      ? null
+      : {
+          ...liveRewriteFixture(
+            rewriteSection,
+            rewrite.options,
+            rewriteOriginal || rewriteSection.content,
+          ),
+          selectedText:
+            rewriteSelection === null
+              ? rewriteOriginal || rewriteSection.content
+              : (rewriteOriginal || rewriteSection.content).slice(
+                  rewriteSelection.start,
+                  rewriteSelection.end,
+                ),
+        };
+  const selectedAlternative =
+    rewriteFixture?.alternatives.find(
+      (alternative) => alternative.id === selectedAlternativeId,
+    ) ?? rewriteFixture?.alternatives[0];
 
   return (
     <div className="workbench">
@@ -221,7 +308,11 @@ export function DashboardPage({
             </div>
             <div className="workbench__pane workbench__pane--centre">
               <div id="workbench-centre">
-                <AuthoringPane workspace={workspace} />
+                <AuthoringPane
+                  workspace={workspace}
+                  onRewrite={reviewing ? undefined : openRewrite}
+                  rewriteBusy={rewrite.pending}
+                />
               </div>
             </div>
             <div className="workbench__pane workbench__pane--inspector">
@@ -251,6 +342,81 @@ export function DashboardPage({
                   }
             }
           />
+          {!reviewing &&
+            rewriteOpen &&
+            rewriteFixture !== null &&
+            rewriteSection !== null &&
+            (compareOpen && selectedAlternative !== undefined ? (
+              <div className="workbench-rewrite">
+                <ComparePanel
+                  live
+                  fixture={rewriteFixture}
+                  alternative={selectedAlternative}
+                  view={compareView}
+                  onChangeView={setCompareView}
+                  onBack={() => setCompareOpen(false)}
+                  onUse={() => {
+                    void rewrite.useOption(selectedAlternative.id).then((applied) => {
+                      if (applied) {
+                        setRewriteOpen(false);
+                        setCompareOpen(false);
+                        workspace.retryWorkspace();
+                      }
+                    });
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="workbench-rewrite">
+                {rewrite.error !== null && (
+                  <p className="workbench-feedback workbench-feedback--error" role="alert">
+                    {rewrite.error}
+                  </p>
+                )}
+                <RewritePanel
+                  live
+                  stage={rewriteStage}
+                  fixture={rewriteFixture}
+                  instruction={rewriteInstruction}
+                  keepCitations={keepCitations}
+                  useSources={useSources}
+                  selectedAlternativeId={selectedAlternativeId}
+                  onInstructionChange={setRewriteInstruction}
+                  onKeepCitationsChange={setKeepCitations}
+                  onUseSourcesChange={setUseSources}
+                  onReviewAlternatives={() => {
+                    void rewrite.start({
+                      instruction: rewriteInstruction.trim(),
+                      keepCitations,
+                      useSources,
+                      selectionStart: rewriteSelection?.start,
+                      selectionEnd: rewriteSelection?.end,
+                    });
+                  }}
+                  onSelectAlternative={setSelectedAlternativeId}
+                  onCompare={(id) => {
+                    setSelectedAlternativeId(id);
+                    setCompareOpen(true);
+                  }}
+                  onUse={(id) => {
+                    void rewrite.useOption(id).then((applied) => {
+                      if (applied) {
+                        setRewriteOpen(false);
+                        setCompareOpen(false);
+                        workspace.retryWorkspace();
+                      }
+                    });
+                  }}
+                  onRevise={() =>
+                    setRewriteStage(
+                      rewriteSelection === null ? "whole" : "selection",
+                    )
+                  }
+                  onKeepOriginal={closeRewrite}
+                  onClose={closeRewrite}
+                />
+              </div>
+            ))}
         </>
       )}
 

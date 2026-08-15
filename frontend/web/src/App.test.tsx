@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -267,6 +267,154 @@ describe("App", () => {
     expect(
       await screen.findByText(/provider usage records are not connected/i),
     ).toBeInTheDocument();
+  });
+
+  it("restores a live snapshot onto the current draft", async () => {
+    const user = userEvent.setup();
+    const account = {
+      id: "account-1",
+      email: "researcher@example.com",
+      is_active: true,
+      created_at: "2026-07-29T10:00:00Z",
+    };
+    const conversation = {
+      id: "conversation-1",
+      organization_id: "org-1",
+      owner_account_id: account.id,
+      title: "AURORA-301",
+      status: "active",
+      collaborator_account_ids: [],
+      created_at: "2026-07-29T10:00:00Z",
+      updated_at: "2026-07-29T10:00:00Z",
+      last_activity_at: "2026-07-29T10:00:00Z",
+      archived_at: null,
+    };
+    const section = {
+      id: "section-5",
+      conversation_id: conversation.id,
+      organization_id: conversation.organization_id,
+      catalog_version: "2025.1",
+      section_number: "5",
+      title: "Trial Population",
+      position: 5,
+      instructions: "",
+      content: "Current draft",
+      status: "draft",
+      current_revision: 2,
+      completed_at: null,
+      completed_by_account_id: null,
+      created_at: "2026-07-29T10:00:00Z",
+      updated_at: "2026-07-29T10:00:00Z",
+    };
+    const revisions = [
+      {
+        id: "revision-2",
+        section_id: section.id,
+        conversation_id: conversation.id,
+        organization_id: conversation.organization_id,
+        revision_number: 2,
+        action: "revised",
+        instructions: "",
+        content: "Current draft",
+        status: "draft",
+        author_account_id: null,
+        created_at: "2026-07-30T10:00:00Z",
+      },
+      {
+        id: "revision-1",
+        section_id: section.id,
+        conversation_id: conversation.id,
+        organization_id: conversation.organization_id,
+        revision_number: 1,
+        action: "generated",
+        instructions: "",
+        content: "First draft",
+        status: "draft",
+        author_account_id: null,
+        created_at: "2026-07-29T10:00:00Z",
+      },
+    ];
+
+    const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/auth/refresh")) {
+        return jsonResponse(200, {
+          access_token: "access-token",
+          token_type: "bearer",
+          expires_in: 300,
+        });
+      }
+      if (url.endsWith("/v1/auth/me")) {
+        return jsonResponse(200, account);
+      }
+      if (url.includes("/v1/organizations")) {
+        return jsonResponse(200, [
+          {
+            id: "org-1",
+            name: "Acme Trials",
+            role: "owner",
+            created_at: "2026-07-29T10:00:00Z",
+          },
+        ]);
+      }
+      if (url.includes("/messages")) {
+        return jsonResponse(200, { items: [], next_cursor: null });
+      }
+      if (url.includes("/documents")) {
+        return jsonResponse(200, { items: [], next_cursor: null });
+      }
+      if (url.includes("/restore")) {
+        return jsonResponse(200, {
+          ...section,
+          content: "First draft",
+          current_revision: 3,
+          updated_at: "2026-07-31T10:00:00Z",
+        });
+      }
+      if (url.includes("/revisions")) {
+        return jsonResponse(200, { items: revisions, next_after_revision: null });
+      }
+      if (url.includes("/m11-sections")) {
+        return jsonResponse(200, {
+          catalog_version: "2025.1",
+          items: [section],
+        });
+      }
+      if (url.includes("/v1/ai/conversations/conversation-1")) {
+        return jsonResponse(200, conversation);
+      }
+      return jsonResponse(404, { detail: "Not found" });
+    });
+
+    vi.stubGlobal("fetch", stub);
+    renderApp({ route: "/workspace/conversation-1/revisions" });
+
+    expect(
+      await screen.findByRole("heading", { name: "Revision history" }),
+    ).toBeInTheDocument();
+    const revisionOne = await screen.findByRole("button", { name: /revision 1/i });
+    const row = revisionOne.closest("li");
+    expect(row).not.toBeNull();
+    await user.click(revisionOne);
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "Preview" }));
+    expect(
+      screen.getByRole("button", { name: /restore as new revision/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /restore as new revision/i }));
+    await user.click(
+      await screen.findByRole("button", { name: "Restore as revision 3" }),
+    );
+
+    await waitFor(() => {
+      const restoreCall = stub.mock.calls.find(([input, init]) => {
+        return String(input).includes("/restore") && init?.method === "POST";
+      });
+      expect(restoreCall).toBeDefined();
+      expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({
+        expected_revision: 2,
+        revision_number: 1,
+      });
+    });
   });
 
   it("renders the evidence and rewrite review routes without a session", async () => {

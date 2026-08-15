@@ -6,6 +6,7 @@ from trialscribe_ai.schemas.m11_section import (
     M11SectionResponse,
     M11SectionRevisionResponse,
 )
+from trialscribe_ai.utils.enum import M11RevisionAction
 
 
 def constraint_names(model: type[object]) -> set[str]:
@@ -75,3 +76,5 @@ def test_section_and_revision_responses_accept_orm_values() -> None:
 
     assert M11SectionResponse.model_validate(section).status.value == "draft"
     assert M11SectionRevisionResponse.model_validate(revision).action.value == "revised"
+    assert M11RevisionAction.GENERATED.value == "generated"
+    assert M11RevisionAction.RESTORED.value == "restored"

@@ -27,7 +27,7 @@ class M11SectionRevision(UuidPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_m11_section_revisions_number_positive",
         ),
         CheckConstraint(
-            "action IN ('revised', 'done', 'reopened')",
+            "action IN ('revised', 'done', 'reopened', 'generated', 'restored')",
             name="ck_m11_section_revisions_action",
         ),
         CheckConstraint(
@@ -36,7 +36,8 @@ class M11SectionRevision(UuidPrimaryKeyMixin, TimestampMixin, Base):
         ),
         CheckConstraint(
             "(action = 'done' AND status = 'done') "
-            "OR (action IN ('revised', 'reopened') AND status = 'draft')",
+            "OR (action IN ('revised', 'reopened', 'generated', 'restored') "
+            "AND status = 'draft')",
             name="ck_m11_section_revisions_action_status",
         ),
         CheckConstraint(

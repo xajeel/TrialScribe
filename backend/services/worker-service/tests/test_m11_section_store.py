@@ -54,10 +54,11 @@ def test_revise_draft_sql_updates_activity_and_inserts_revision() -> None:
     class MultiSession:
         def __init__(self) -> None:
             self.statements: list[Any] = []
+            self.parameters: list[Any] = []
 
         async def execute(self, statement: Any, parameters: Any = None) -> Any:
-            del parameters
             self.statements.append(statement)
+            self.parameters.append(parameters)
             if len(self.statements) == 1:
 
                 class _Result:
@@ -107,6 +108,54 @@ def test_revise_draft_sql_updates_activity_and_inserts_revision() -> None:
     insert_sql = compiled(session.statements[2])
     assert "insert" in insert_sql
     assert "m11_section_revisions" in insert_sql
+    assert session.parameters[2]["action"] == "revised"
+
+
+def test_revise_draft_can_record_a_generated_action() -> None:
+    class MultiSession:
+        def __init__(self) -> None:
+            self.parameters: list[Any] = []
+
+        async def execute(self, statement: Any, parameters: Any = None) -> Any:
+            self.parameters.append(parameters)
+            if len(self.parameters) == 1:
+
+                class _Result:
+                    def mappings(self) -> Any:
+                        class _Map:
+                            def first(self) -> dict[str, Any]:
+                                return {
+                                    "id": UUID("00000000-0000-4000-8000-000000000799"),
+                                    "instructions": "",
+                                    "content": "Adults aged 18 years or older.",
+                                    "current_revision": 1,
+                                }
+
+                        return _Map()
+
+                return _Result()
+            if len(self.parameters) >= 3:
+                raise _Captured
+            return None
+
+    session = MultiSession()
+    store = M11SectionStore(session)  # type: ignore[arg-type]
+    try:
+        asyncio.run(
+            store.revise_draft(
+                ORGANIZATION_ID,
+                CONVERSATION_ID,
+                "5",
+                expected_revision=0,
+                content="Adults aged 18 years or older.",
+                author_account_id=ACCOUNT_ID,
+                now=NOW,
+                action="generated",
+            )
+        )
+    except _Captured:
+        pass
+    assert session.parameters[2]["action"] == "generated"
 
 
 def test_recent_memory_sql_names_both_tenant_columns() -> None:

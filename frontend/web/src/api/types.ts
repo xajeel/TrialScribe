@@ -62,7 +62,12 @@ export type MessageRole = "user" | "assistant";
 export type DocumentKind = "trial_data" | "research_document";
 export type DocumentStatus = "pending" | "ready" | "failed";
 export type M11SectionStatus = "draft" | "done";
-export type M11RevisionAction = "revised" | "done" | "reopened";
+export type M11RevisionAction =
+  | "revised"
+  | "done"
+  | "reopened"
+  | "generated"
+  | "restored";
 
 export interface Conversation {
   id: string;
@@ -199,6 +204,15 @@ export interface GenerationAttemptRecord {
 
 export interface GenerationAttemptList {
   items: GenerationAttemptRecord[];
+}
+
+export interface RewriteOptionRecord {
+  id: string;
+  text: string;
+}
+
+export interface RewriteOptionList {
+  items: RewriteOptionRecord[];
 }
 
 export interface EvidenceChunkRecord {

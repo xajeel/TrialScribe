@@ -102,8 +102,9 @@ class MemorySections:
         content: str,
         author_account_id: UUID,
         now: object,
+        action: str = "revised",
     ) -> bool:
-        del organization_id, conversation_id, author_account_id, now
+        del organization_id, conversation_id, author_account_id, now, action
         row = self.rows.get(section_number)
         if (
             row is None

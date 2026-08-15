@@ -161,3 +161,20 @@ def test_revision_page_is_scoped_ascending_and_uses_limit_plus_one() -> None:
     assert (
         "ORDER BY trialscribe.m11_section_revisions.revision_number" in compiled
     )
+
+
+def test_revision_lookup_names_section_conversation_and_tenant() -> None:
+    current = section()
+    session = AsyncMock(spec=AsyncSession)
+    session.scalar.return_value = None
+    repository = M11SectionRevisionRepository(session)
+
+    asyncio.run(
+        repository.get_scoped(current.id, CONVERSATION_ID, ORGANIZATION_ID, 1)
+    )
+
+    statement = str(session.scalar.await_args.args[0])
+    assert "m11_section_revisions.section_id" in statement
+    assert "m11_section_revisions.conversation_id" in statement
+    assert "m11_section_revisions.organization_id" in statement
+    assert "m11_section_revisions.revision_number" in statement

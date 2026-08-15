@@ -239,6 +239,48 @@ class M11SectionService:
             limit=limit,
         )
 
+    async def restore_section(
+        self,
+        organization_id: UUID,
+        account_id: UUID,
+        conversation_id: UUID,
+        section_number: str,
+        *,
+        expected_revision: int,
+        revision_number: int,
+        now: datetime,
+    ) -> M11Section:
+        self._validate_expected_revision(expected_revision)
+        if revision_number < 1:
+            raise InvalidM11SectionInputError
+        conversation, section = await self._locked_mutable_section(
+            organization_id,
+            account_id,
+            conversation_id,
+            section_number,
+        )
+        self._require_revision(section, expected_revision)
+        if section.status != M11SectionStatus.DRAFT:
+            raise M11SectionTransitionError
+        snapshot = await self._revisions.get_scoped(
+            section.id,
+            conversation_id,
+            organization_id,
+            revision_number,
+        )
+        if snapshot is None:
+            raise M11SectionNotFoundError
+        section.instructions = snapshot.instructions
+        section.content = snapshot.content
+        await self._record_action(
+            conversation,
+            section,
+            account_id,
+            M11RevisionAction.RESTORED,
+            now,
+        )
+        return section
+
     async def _locked_mutable_section(
         self,
         organization_id: UUID,

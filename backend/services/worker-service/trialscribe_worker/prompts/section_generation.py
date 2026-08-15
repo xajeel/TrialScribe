@@ -37,6 +37,50 @@ def section_generation_messages(
     ]
 
 
+def section_rewrite_messages(
+    *,
+    section_number: str,
+    title: str,
+    instructions: str,
+    trial_passages: list[str],
+    evidence: list[object],
+    memory: list[tuple[str, str]],
+    current_content: str,
+    selected_passage: str | None,
+    instruction: str,
+    variant_hint: str,
+) -> list[ChatMessage]:
+    """Return rewrite messages with the same untrusted prefix as generation."""
+
+    messages = [
+        ChatMessage(role="system", content=GENERATE_SYSTEM_PROMPT),
+        ChatMessage(role="user", content=_section_spec(section_number, title)),
+        ChatMessage(role="user", content=_trial_summary(trial_passages)),
+        ChatMessage(role="user", content=_evidence_block(evidence)),
+        ChatMessage(
+            role="user",
+            content="Current draft\n" + (current_content.strip() or "(none)"),
+        ),
+    ]
+    if selected_passage is not None:
+        messages.append(
+            ChatMessage(
+                role="user",
+                content="Selected passage\n" + selected_passage,
+            )
+        )
+    messages.append(
+        ChatMessage(
+            role="user",
+            content=(
+                _instruction_block(instructions, memory)
+                + f"\n\nRewrite instruction\n{instruction.strip()}\n{variant_hint}"
+            ),
+        )
+    )
+    return messages
+
+
 def _section_spec(section_number: str, title: str) -> str:
     return f"Section spec\nnumber={section_number}\ntitle={title}"
 

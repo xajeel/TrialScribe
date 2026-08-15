@@ -74,6 +74,13 @@ class M11SectionTransitionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class M11SectionRestoreRequest(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    expected_revision: int = Field(ge=0)
+    revision_number: int = Field(ge=1)
+
+
 class M11RevisionPageQuery(BaseModel):
     after_revision: int = Field(default=0, ge=0)
     limit: int = Field(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT)

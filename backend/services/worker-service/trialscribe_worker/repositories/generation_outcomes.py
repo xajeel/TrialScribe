@@ -1,13 +1,24 @@
 """Read the latest per-section generation outcome without loading prompts."""
 
+import json
 from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from trialscribe_worker.utils.constant import REWRITE_OPTIONS_KIND
+
 _LIST_FOR_JOB = text(
     "SELECT section_number, status, error_code, citation_ids, attempt "
+    "FROM trialscribe.section_generation_attempts "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id "
+    "AND job_id = :job_id "
+    "ORDER BY attempt DESC"
+)
+_REWRITE_OPTIONS = text(
+    "SELECT content, status, attempt "
     "FROM trialscribe.section_generation_attempts "
     "WHERE organization_id = :organization_id "
     "AND conversation_id = :conversation_id "
@@ -73,3 +84,54 @@ class GenerationOutcomeRepository:
                 attempt=int(row["attempt"]),
             )
         return list(latest.values())
+
+    async def get_rewrite_options(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        job_id: UUID,
+    ) -> list[tuple[str, str]]:
+        """Return rewrite option texts for the newest succeeded rewrite attempt.
+
+        The statement never selects `prompt` (B4).
+        """
+
+        result = await self._session.execute(
+            _REWRITE_OPTIONS,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+                "job_id": job_id,
+            },
+        )
+        for row in result.mappings():
+            if str(row["status"]) != "succeeded":
+                continue
+            payload = _rewrite_items(row["content"])
+            if payload is not None:
+                return payload
+        return []
+
+
+def _rewrite_items(value: object) -> list[tuple[str, str]] | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict) or parsed.get("kind") != REWRITE_OPTIONS_KIND:
+        return None
+    items = parsed.get("items")
+    if not isinstance(items, list):
+        return None
+    options: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        option_id = item.get("id")
+        text = item.get("text")
+        if not isinstance(option_id, str) or not isinstance(text, str):
+            return None
+        options.append((option_id, text))
+    return options

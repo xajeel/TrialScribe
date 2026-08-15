@@ -11101,6 +11101,55 @@ select:focus-visible {
   gap: 0.5rem;
 }
 
+.workbench-rewrite {
+  position: fixed;
+  top: 3.75rem;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  width: min(32rem, 100vw);
+  flex-direction: column;
+  overflow: auto;
+  border-left: 1px solid var(--wb-line);
+  background: var(--wb-sheet);
+  box-shadow: var(--shadow-lg);
+}
+
+.workbench-rewrite .rewrite-panel,
+.workbench-rewrite .compare-panel {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem 1.25rem 1.5rem;
+}
+
+.workbench-rewrite .rewrite-panel__header,
+.workbench-rewrite .compare-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.workbench-rewrite .rewrite-panel__form,
+.workbench-rewrite .rewrite-panel__alternatives {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.workbench-rewrite .rewrite-panel__form textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+.workbench-rewrite .rewrite-panel__primary,
+.workbench-rewrite .compare-panel__use {
+  align-self: flex-start;
+}
+
 /* Inspector --------------------------------------------------------------- */
 
 .workbench-inspector {

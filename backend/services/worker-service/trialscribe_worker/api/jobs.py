@@ -33,6 +33,8 @@ from trialscribe_worker.schemas.job import (
     JobCreateRequest,
     JobListResponse,
     JobResponse,
+    RewriteOptionListResponse,
+    RewriteOptionPublic,
 )
 from trialscribe_worker.services.jobs import JobService
 from trialscribe_worker.utils.constant import (
@@ -155,6 +157,30 @@ async def list_job_attempts(
             )
             for row in rows
         ]
+    )
+
+
+@router.get("/{job_id}/rewrite-options", response_model=RewriteOptionListResponse)
+async def list_rewrite_options(
+    job_id: UUID,
+    organization_id: OrganizationId,
+    runtime: Runtime,
+    progress: Progress,
+    registry: Registry,
+    event_settings: EventSettings,
+) -> RewriteOptionListResponse:
+    async with runtime.transaction() as session:
+        service = _service(session, progress, registry, event_settings.topic_prefix)
+        job = await service.get_job(organization_id, job_id)
+        if job.conversation_id is None:
+            return RewriteOptionListResponse(items=[])
+        rows = await GenerationOutcomeRepository(session).get_rewrite_options(
+            organization_id,
+            job.conversation_id,
+            job_id,
+        )
+    return RewriteOptionListResponse(
+        items=[RewriteOptionPublic(id=option_id, text=text) for option_id, text in rows]
     )
 
 

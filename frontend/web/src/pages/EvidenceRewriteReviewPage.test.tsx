@@ -68,6 +68,15 @@ describe("EvidenceReviewPage", () => {
 });
 
 describe("RewriteReviewPage", () => {
+  it("does not fetch rewrite jobs on review routes", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderRewrite("selection");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/not produced or saved by the product/i),
+    ).toBeInTheDocument();
+  });
   it("moves from setup through compare and back to alternatives", async () => {
     const user = userEvent.setup();
     renderRewrite("selection");

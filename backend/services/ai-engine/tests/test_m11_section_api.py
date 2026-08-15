@@ -142,6 +142,22 @@ class FakeM11SectionService:
         self.section.current_revision += 1
         return self.section
 
+    async def restore_section(
+        self,
+        *_args: object,
+        expected_revision: int,
+        revision_number: int,
+        now: datetime,
+    ) -> M11Section:
+        self._raise()
+        assert expected_revision == self.section.current_revision
+        assert revision_number >= 1
+        assert now == NOW
+        self.section.content = self.revision.content
+        self.section.instructions = self.revision.instructions
+        self.section.current_revision += 1
+        return self.section
+
     async def list_revisions(
         self,
         *_args: object,
@@ -260,6 +276,15 @@ def test_revise_done_reopen_and_revision_page_contracts(
     assert history.json()["next_after_revision"] == 1
     assert runtime.transactions == 4
 
+    restored = client.post(
+        f"{root}/restore",
+        json={"expected_revision": 3, "revision_number": 1},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["content"] == "Draft"
+    assert restored.json()["current_revision"] == 4
+    assert runtime.transactions == 5
+
 
 def test_scoped_routes_require_trusted_context() -> None:
     response = TestClient(app).get(
@@ -306,6 +331,22 @@ def test_service_and_tenant_errors_are_allow_listed(
     assert response.status_code == status_code
     assert response.json() == {"detail": detail}
     assert str(error) not in response.text
+
+
+def test_restore_of_a_missing_snapshot_is_not_found(
+    api_context: tuple[TestClient, FakeM11SectionService, FakeDatabaseRuntime],
+) -> None:
+    client, service, _ = api_context
+    service.error = M11SectionNotFoundError("section secret")
+
+    response = client.post(
+        f"/conversations/{CONVERSATION_ID}/m11-sections/1/restore",
+        json={"expected_revision": 1, "revision_number": 1},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "M11 section not found"}
+    assert "section secret" not in response.text
 
 
 def test_validation_never_echoes_section_content(

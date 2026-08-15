@@ -33,3 +33,5 @@ class M11RevisionAction(StrEnum):
     REVISED = "revised"
     DONE = "done"
     REOPENED = "reopened"
+    GENERATED = "generated"
+    RESTORED = "restored"

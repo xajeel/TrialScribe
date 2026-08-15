@@ -88,6 +88,11 @@ describe("RewritePanel", () => {
     expect(screen.queryByText(/model/i)).not.toBeInTheDocument();
   });
 
+  it("hides the fixture note on a live rewrite", () => {
+    render(<RewritePanel {...props({ live: true, stage: "whole" })} />);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
   it("selects, compares, and uses either deterministic alternative", async () => {
     const user = userEvent.setup();
     const onSelectAlternative = vi.fn();

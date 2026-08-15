@@ -656,6 +656,122 @@ describe("DashboardPage authoring workspace", () => {
       screen.getByText(/Your durable instructions, sources, and M11 sections/),
     ).toBeInTheDocument();
   });
+
+  it("posts a rewrite job and uses the chosen wording", async () => {
+    const user = userEvent.setup();
+    const alpha = conversation("conversation-alpha", "Protocol Alpha");
+    let currentSection = section(
+      alpha.id,
+      "section-alpha",
+      "Trial synopsis",
+      "Initial section content",
+    );
+    const workspaceData: WorkspaceData = {
+      messages: [],
+      documents: [],
+      sections: [currentSection],
+    };
+    const jobId = "00000000-0000-4000-8000-000000000040";
+    const base = readHandler([alpha], { [alpha.id]: workspaceData });
+    const { fetcher, calls } = createFetcher((path, options) => {
+      if (path === "/v1/jobs" && options?.method === "POST") {
+        return {
+          id: jobId,
+          organization_id: ORGANIZATION_ID,
+          conversation_id: alpha.id,
+          kind: "generate_sections",
+          status: "succeeded",
+          progress: 100,
+          attempt: 1,
+          error_code: null,
+          correlation_id: "00000000-0000-4000-8000-000000000099",
+          created_at: "2026-08-15T09:00:00Z",
+          updated_at: "2026-08-15T09:00:00Z",
+          started_at: "2026-08-15T09:00:00Z",
+          finished_at: "2026-08-15T09:01:00Z",
+          cancel_requested_at: null,
+        };
+      }
+      if (path === `/v1/jobs/${jobId}`) {
+        return {
+          id: jobId,
+          organization_id: ORGANIZATION_ID,
+          conversation_id: alpha.id,
+          kind: "generate_sections",
+          status: "succeeded",
+          progress: 100,
+          attempt: 1,
+          error_code: null,
+          correlation_id: "00000000-0000-4000-8000-000000000099",
+          created_at: "2026-08-15T09:00:00Z",
+          updated_at: "2026-08-15T09:00:00Z",
+          started_at: "2026-08-15T09:00:00Z",
+          finished_at: "2026-08-15T09:01:00Z",
+          cancel_requested_at: null,
+        };
+      }
+      if (path === `/v1/jobs/${jobId}/rewrite-options`) {
+        return {
+          items: [
+            { id: "alternative-1", text: "Rewritten option one." },
+            { id: "alternative-2", text: "Rewritten option two." },
+          ],
+        };
+      }
+      if (
+        path.endsWith(`/${currentSection.section_number}`) &&
+        options?.method === "PATCH"
+      ) {
+        const body = options.json as {
+          expected_revision: number;
+          instructions: string;
+          content: string;
+        };
+        currentSection = {
+          ...currentSection,
+          instructions: body.instructions,
+          content: body.content,
+          current_revision: body.expected_revision + 1,
+        };
+        workspaceData.sections = [currentSection];
+        return currentSection;
+      }
+      return base(path, options);
+    });
+
+    renderDashboard(fetcher);
+    await screen.findByRole("heading", { name: "1 · Trial synopsis" });
+    await user.click(screen.getByRole("button", { name: "Rewrite section" }));
+    await user.type(
+      screen.getByLabelText("Rewrite instruction"),
+      "Tighten the wording.",
+    );
+    await user.click(screen.getByRole("button", { name: "Review alternatives" }));
+    expect(
+      await screen.findByRole("heading", { name: "Rewrite alternatives" }),
+    ).toBeInTheDocument();
+
+    const created = calls.find(
+      (call) => call.path === "/v1/jobs" && call.options?.method === "POST",
+    );
+    expect(created?.options?.json).toMatchObject({
+      kind: "generate_sections",
+      parameters: {
+        mode: "rewrite",
+        section_numbers: ["1"],
+        rewrite_instruction: "Tighten the wording.",
+      },
+    });
+
+    const first = screen.getByRole("article", { name: "Alternative 1" });
+    await user.click(within(first).getByRole("button", { name: "Use this version" }));
+    await waitFor(() => {
+      const patched = calls.find((call) => call.options?.method === "PATCH");
+      expect(patched?.options?.json).toMatchObject({
+        content: "Rewritten option one.",
+      });
+    });
+  });
   it("opens the protocol named in the route instead of the first one", async () => {
     const alpha = conversation("conversation-alpha", "Protocol Alpha");
     const beta = conversation("conversation-beta", "Protocol Beta");

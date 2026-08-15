@@ -172,8 +172,25 @@ class FakeRevisionRepository:
             and item.revision_number > after_revision
         ]
         page = items[:limit]
-        cursor = page[-1].revision_number if len(items) > limit else None
-        return page, cursor
+        next_after = page[-1].revision_number if len(items) > limit else None
+        return page, next_after
+
+    async def get_scoped(
+        self,
+        section_id: UUID,
+        conversation_id: UUID,
+        organization_id: UUID,
+        revision_number: int,
+    ) -> M11SectionRevision | None:
+        for item in self.items:
+            if (
+                item.section_id == section_id
+                and item.conversation_id == conversation_id
+                and item.organization_id == organization_id
+                and item.revision_number == revision_number
+            ):
+                return item
+        return None
 
 
 def service_context() -> tuple[
@@ -518,6 +535,124 @@ def test_invalid_stale_and_illegal_transition_inputs_are_rejected() -> None:
                 expected_revision=done.current_revision,
                 instructions=None,
                 content="Must reopen first",
+                now=NOW,
+            )
+        )
+
+
+def test_restore_copies_an_earlier_snapshot_onto_the_draft() -> None:
+    service, conversation, conversations, _, revisions = service_context()
+    initialize(service)
+    first = asyncio.run(
+        service.revise_section(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=0,
+            instructions="First note",
+            content="First wording",
+            now=NOW,
+        )
+    )
+    asyncio.run(
+        service.revise_section(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=first.current_revision,
+            instructions="Later note",
+            content="Later wording",
+            now=NOW,
+        )
+    )
+    restored = asyncio.run(
+        service.restore_section(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=2,
+            revision_number=1,
+            now=NOW,
+        )
+    )
+    assert restored.content == "First wording"
+    assert restored.instructions == "First note"
+    assert restored.current_revision == 3
+    assert revisions.items[-1].action == "restored"
+    assert conversations.flush_calls >= 1
+
+
+def test_restore_rejects_done_stale_and_missing_snapshots() -> None:
+    service, conversation, _, _, _ = service_context()
+    initialize(service)
+    asyncio.run(
+        service.revise_section(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=0,
+            instructions=None,
+            content="Ready",
+            now=NOW,
+        )
+    )
+    done = asyncio.run(
+        service.mark_done(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=1,
+            now=NOW,
+        )
+    )
+    with pytest.raises(M11SectionTransitionError):
+        asyncio.run(
+            service.restore_section(
+                ORGANIZATION_ID,
+                OWNER_ID,
+                conversation.id,
+                "1",
+                expected_revision=done.current_revision,
+                revision_number=1,
+                now=NOW,
+            )
+        )
+    asyncio.run(
+        service.reopen(
+            ORGANIZATION_ID,
+            OWNER_ID,
+            conversation.id,
+            "1",
+            expected_revision=done.current_revision,
+            now=NOW,
+        )
+    )
+    with pytest.raises(M11SectionRevisionConflictError):
+        asyncio.run(
+            service.restore_section(
+                ORGANIZATION_ID,
+                OWNER_ID,
+                conversation.id,
+                "1",
+                expected_revision=0,
+                revision_number=1,
+                now=NOW,
+            )
+        )
+    with pytest.raises(M11SectionNotFoundError):
+        asyncio.run(
+            service.restore_section(
+                ORGANIZATION_ID,
+                OWNER_ID,
+                conversation.id,
+                "1",
+                expected_revision=3,
+                revision_number=99,
                 now=NOW,
             )
         )

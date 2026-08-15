@@ -13,6 +13,7 @@ export interface ComparePanelProps {
   onChangeView: (view: CompareView) => void;
   onBack: () => void;
   onUse: (opener: HTMLElement) => void;
+  live?: boolean;
 }
 
 function DiffText({ segments }: { segments: ReadonlyArray<DiffSegment> }) {
@@ -40,6 +41,7 @@ export function ComparePanel({
   onChangeView,
   onBack,
   onUse,
+  live = false,
 }: ComparePanelProps) {
   const laterSegments =
     alternative.id === "alternative-1"
@@ -127,10 +129,12 @@ export function ComparePanel({
       )}
 
       <footer className="compare-panel__footer">
-        <p>
-          Review fixture — choosing this wording opens confirmation and does
-          not change stored content.
-        </p>
+        {!live && (
+          <p>
+            Review fixture — choosing this wording opens confirmation and does
+            not change stored content.
+          </p>
+        )}
         <button
           type="button"
           className="compare-panel__use"

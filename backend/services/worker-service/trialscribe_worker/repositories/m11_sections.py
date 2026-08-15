@@ -96,6 +96,7 @@ class M11SectionStore:
         content: str,
         author_account_id: UUID,
         now: datetime,
+        action: str = M11_REVISION_ACTION_REVISED,
     ) -> bool:
         """Save a draft revision when the expected number still matches."""
 
@@ -133,7 +134,7 @@ class M11SectionStore:
                 "conversation_id": conversation_id,
                 "organization_id": organization_id,
                 "revision_number": row["current_revision"],
-                "action": M11_REVISION_ACTION_REVISED,
+                "action": action,
                 "instructions": row["instructions"],
                 "content": row["content"],
                 "status": M11_SECTION_DRAFT_STATUS,
