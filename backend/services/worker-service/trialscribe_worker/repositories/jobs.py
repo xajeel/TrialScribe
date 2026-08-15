@@ -16,6 +16,7 @@ from trialscribe_worker.models.job import Job
 from trialscribe_worker.utils.constant import (
     JOB_LIST_MAX_LIMIT,
     JOB_LIST_MIN_LIMIT,
+    USAGE_JOB_LIST_LIMIT,
 )
 from trialscribe_worker.utils.enum import (
     CLAIMABLE_JOB_STATUSES,
@@ -67,6 +68,42 @@ class JobRepository:
         if kind is not None:
             statement = statement.where(Job.kind == kind)
         statement = statement.order_by(Job.created_at.desc()).limit(bounded)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def list_usage_jobs(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        job_ids: list[UUID],
+    ) -> list[Job]:
+        """Load named tickets for usage, tenant-scoped. Skip an empty id list."""
+
+        if not job_ids:
+            return []
+        statement = select(Job).where(
+            Job.organization_id == organization_id,
+            Job.conversation_id == conversation_id,
+            Job.id.in_(job_ids),
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def list_in_flight_usage_jobs(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[Job]:
+        """Newest unfinished tickets for this conversation's usage sheet."""
+
+        statement = (
+            select(Job)
+            .where(
+                Job.organization_id == organization_id,
+                Job.conversation_id == conversation_id,
+                Job.status.in_(CLAIMABLE_VALUES),
+            )
+            .order_by(Job.created_at.desc())
+            .limit(USAGE_JOB_LIST_LIMIT)
+        )
         return list((await self._session.execute(statement)).scalars().all())
 
     async def exists(self, job_id: UUID) -> bool:

@@ -23,11 +23,16 @@ from trialscribe_worker.api.dependencies import (
     get_registry,
 )
 from trialscribe_worker.models.job import Job
+from trialscribe_worker.providers.model_catalog import cost_micros
 from trialscribe_worker.repositories.generation_outcomes import GenerationAttemptOutcome
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
-from trialscribe_worker.utils.constant import GENERATE_SECTIONS_KIND
-from trialscribe_worker.utils.enum import JobKind, JobStatus
+from trialscribe_worker.repositories.provider_calls import ProviderCallListRecord
+from trialscribe_worker.utils.constant import (
+    GENERATE_SECTIONS_KIND,
+    PRICING_VERSION_DEFAULT,
+)
+from trialscribe_worker.utils.enum import JobKind, JobStatus, ProviderOperation, ProviderOutcome
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000041")
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000042")
@@ -111,6 +116,36 @@ class FakeJobRepository:
         jobs.sort(key=lambda item: item.created_at, reverse=True)
         return jobs[:limit]
 
+    async def list_usage_jobs(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        job_ids: list[UUID],
+    ) -> list[Job]:
+        if not job_ids:
+            return []
+        wanted = set(job_ids)
+        return [
+            job
+            for job in type(self).jobs.values()
+            if job.organization_id == organization_id
+            and job.conversation_id == conversation_id
+            and job.id in wanted
+        ]
+
+    async def list_in_flight_usage_jobs(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[Job]:
+        return [
+            job
+            for job in type(self).jobs.values()
+            if job.organization_id == organization_id
+            and job.conversation_id == conversation_id
+            and not JobStatus(job.status).is_terminal()
+        ]
+
     async def cancel_queued(
         self,
         organization_id: UUID,
@@ -168,6 +203,52 @@ class FakeGenerationOutcomeRepository:
         return list(type(self).options)
 
 
+class FakeProviderCallRepository:
+    """Stand in for stored metering rows and the conversation 404 check."""
+
+    conversations: dict[tuple[UUID, UUID], tuple[str, datetime]] = {}
+    calls: list[ProviderCallListRecord] = []
+    writes: int = 0
+
+    def __init__(self, _session: Any) -> None:
+        pass
+
+    async def get_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> tuple[str, datetime] | None:
+        return type(self).conversations.get((organization_id, conversation_id))
+
+    async def summarize_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> tuple[int, int, int, datetime | None]:
+        del organization_id, conversation_id
+        rows = type(self).calls
+        if not rows:
+            return 0, 0, 0, None
+        return (
+            sum(row.cost_micros for row in rows),
+            sum(row.input_tokens for row in rows),
+            sum(row.output_tokens for row in rows),
+            max(row.created_at for row in rows),
+        )
+
+    async def list_for_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[ProviderCallListRecord]:
+        del organization_id, conversation_id
+        return list(type(self).calls)
+
+    async def insert(self, row: object) -> object:
+        type(self).writes += 1
+        return row
+
+
 class FakeOutbox:
     """Record what the request stored beside its ticket."""
 
@@ -208,6 +289,9 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeGenerationOutcomeRepository.rows = []
     FakeGenerationOutcomeRepository.options = []
     FakeGenerationOutcomeRepository.calls = []
+    FakeProviderCallRepository.conversations = {}
+    FakeProviderCallRepository.calls = []
+    FakeProviderCallRepository.writes = 0
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
         FakeJobRepository,
@@ -215,6 +299,10 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.GenerationOutcomeRepository",
         FakeGenerationOutcomeRepository,
+    )
+    monkeypatch.setattr(
+        "trialscribe_worker.api.jobs.ProviderCallRepository",
+        FakeProviderCallRepository,
     )
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.OutboxRepository",
@@ -563,3 +651,132 @@ def test_rewrite_options_for_an_unknown_job_are_not_found(api: dict[str, Any]) -
     assert response.status_code == 404
     assert response.json() == {"detail": "job not found"}
     assert FakeGenerationOutcomeRepository.calls == []
+
+
+def _usage_call(job_id: UUID) -> ProviderCallListRecord:
+    return ProviderCallListRecord(
+        id=uuid4(),
+        job_id=job_id,
+        account_id=ACCOUNT_ID,
+        operation=ProviderOperation.CHAT.value,
+        model="fake-chat",
+        pricing_version=PRICING_VERSION_DEFAULT,
+        input_tokens=10,
+        output_tokens=5,
+        cost_micros=cost_micros("fake-chat", PRICING_VERSION_DEFAULT, 10, 5),
+        latency_ms=3,
+        outcome=ProviderOutcome.SUCCEEDED.value,
+        created_at=NOW,
+    )
+
+
+def _json_keys(value: object) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        keys.update(value)
+        for nested in value.values():
+            keys.update(_json_keys(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            keys.update(_json_keys(nested))
+    return keys
+
+
+def test_unknown_conversation_usage_is_not_found(api: dict[str, Any]) -> None:
+    response = api["client"].get(
+        "/jobs/usage",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversation not found"}
+    assert FakeProviderCallRepository.writes == 0
+
+
+def test_empty_workspace_usage_is_zeros(api: dict[str, Any]) -> None:
+    FakeProviderCallRepository.conversations[(ORGANIZATION_ID, CONVERSATION_ID)] = (
+        "AURORA-301",
+        NOW,
+    )
+
+    response = api["client"].get(
+        "/jobs/usage",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["protocol_title"] == "AURORA-301"
+    assert body["protocol_id"] == str(CONVERSATION_ID)
+    assert body["summary"]["total_cost_micros"] == 0
+    assert body["summary"]["input_tokens"] == 0
+    assert body["summary"]["output_tokens"] == 0
+    assert body["generations"] == []
+    assert FakeProviderCallRepository.writes == 0
+    assert _json_keys(body).isdisjoint({"parameters", "prompt", "rewrite_instruction"})
+
+
+def test_usage_returns_catalog_totals_and_still_404s_unknown_jobs(
+    api: dict[str, Any],
+) -> None:
+    FakeProviderCallRepository.conversations[(ORGANIZATION_ID, CONVERSATION_ID)] = (
+        "AURORA-301",
+        NOW,
+    )
+    created = api["client"].post(
+        "/jobs",
+        json={
+            "kind": GENERATE_SECTIONS_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {
+                "section_numbers": ["6"],
+                "rewrite_instruction": "do not leak this",
+                "expected_revisions": {"6": 0},
+            },
+        },
+        headers=HEADERS,
+    ).json()
+    job_id = UUID(created["id"])
+    job = FakeJobRepository.jobs[job_id]
+    job.status = JobStatus.SUCCEEDED.value
+    job.finished_at = NOW
+    FakeProviderCallRepository.calls = [_usage_call(job_id), _usage_call(job_id)]
+
+    response = api["client"].get(
+        "/jobs/usage",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+    missing = api["client"].get(f"/jobs/{uuid4()}", headers=HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["total_cost_micros"] == 4
+    assert body["generations"][0]["cost_micros"] == 4
+    assert body["generations"][0]["requester"] == "You"
+    assert "do not leak this" not in response.text
+    assert _json_keys(body).isdisjoint({"parameters", "prompt", "rewrite_instruction"})
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "job not found"}
+    assert FakeProviderCallRepository.writes == 0
+
+
+def test_usage_for_another_organization_is_not_found(api: dict[str, Any]) -> None:
+    FakeProviderCallRepository.conversations[(ORGANIZATION_ID, CONVERSATION_ID)] = (
+        "AURORA-301",
+        NOW,
+    )
+
+    response = api["client"].get(
+        "/jobs/usage",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers={
+            "X-TrialScribe-Account-ID": str(ACCOUNT_ID),
+            "X-TrialScribe-Organization-ID": str(OTHER_ORGANIZATION_ID),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversation not found"}

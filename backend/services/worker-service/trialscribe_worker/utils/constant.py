@@ -10,6 +10,8 @@ GENERATE_SECTIONS_KIND = "generate_sections"
 JOB_LIST_MIN_LIMIT = 1
 JOB_LIST_MAX_LIMIT = 20
 JOB_LIST_DEFAULT_LIMIT = 1
+USAGE_JOB_LIST_LIMIT = 50
+USAGE_PRICING_BASIS = "Versioned provider pricing"
 
 MAX_JOB_KIND_LENGTH = 50
 MAX_JOB_STATUS_LENGTH = 20
@@ -37,6 +39,7 @@ JOB_CANCEL_KEY_PREFIX = "trialscribe:job:cancel:"
 JOB_CANCEL_FLAG_VALUE = "1"
 
 JOB_NOT_FOUND_DETAIL = "job not found"
+CONVERSATION_NOT_FOUND_DETAIL = "conversation not found"
 JOB_ALREADY_FINISHED_DETAIL = "job already finished"
 INVALID_JOB_INPUT_DETAIL = "job request is not valid"
 UNSUPPORTED_JOB_KIND_DETAIL = "job kind is not supported"

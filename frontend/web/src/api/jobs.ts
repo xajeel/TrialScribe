@@ -5,6 +5,7 @@ import type {
   JobList,
   JobRecord,
   RewriteOptionList,
+  UsageRecord,
 } from "./types";
 
 export const GENERATE_SECTIONS_JOB_KIND = "generate_sections";
@@ -94,6 +95,18 @@ export function listRewriteOptions(
   jobId: string,
 ): Promise<RewriteOptionList> {
   return fetcher<RewriteOptionList>(`${jobPath(jobId)}/rewrite-options`, {
+    headers: organizationHeaders(organizationId),
+  });
+}
+
+/** Read stored provider usage for one protocol workspace. */
+export function getUsage(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<UsageRecord> {
+  const query = new URLSearchParams({ conversation_id: conversationId });
+  return fetcher<UsageRecord>(`${JOBS_PATH}/usage?${query.toString()}`, {
     headers: organizationHeaders(organizationId),
   });
 }

@@ -73,3 +73,66 @@ class RewriteOptionPublic(BaseModel):
 
 class RewriteOptionListResponse(BaseModel):
     items: list[RewriteOptionPublic]
+
+
+class UsageCallPublic(BaseModel):
+    """One stored provider attempt. Prompts are never included."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    id: str
+    stage: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    result: str
+    cost_micros: int
+
+
+class UsageGenerationPublic(BaseModel):
+    """One job's usage row. Job parameters are never included."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    id: str
+    job_id: str
+    scope: str
+    section_numbers: list[str]
+    requester: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int | None
+    outcome: str
+    cost_micros: int | None
+    pricing_version: str
+    started_at: str | None
+    completed_at: str | None
+    provider_calls: list[UsageCallPublic]
+
+
+class UsageSummaryPublic(BaseModel):
+    """Conversation totals from stored integer micros."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    total_cost_micros: int
+    input_tokens: int
+    output_tokens: int
+    successful_jobs: int
+    failed_or_cancelled: int
+    generation_count: int
+    pricing_basis: str
+    updated_at: str | None
+
+
+class UsageResponse(BaseModel):
+    """Usage snapshot for one protocol workspace."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    protocol_title: str
+    protocol_id: UUID
+    summary: UsageSummaryPublic
+    generations: list[UsageGenerationPublic]

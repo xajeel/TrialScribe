@@ -1,5 +1,8 @@
 """Read and write provider_calls without trusting row counts (bug B23)."""
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -11,6 +14,46 @@ from trialscribe_db.runtime import DatabaseRuntime
 from trialscribe_worker.models.provider_call import ProviderCall
 from trialscribe_worker.providers.gateway import ProviderCallRecord
 from trialscribe_worker.utils.enum import ProviderOutcome
+
+_GET_CONVERSATION = text(
+    "SELECT title, last_activity_at FROM trialscribe.conversations "
+    "WHERE id = :conversation_id AND organization_id = :organization_id"
+)
+_SUMMARIZE_CONVERSATION = text(
+    "SELECT COALESCE(SUM(cost_micros), 0) AS cost_micros, "
+    "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+    "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+    "MAX(created_at) AS updated_at "
+    "FROM trialscribe.provider_calls "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id"
+)
+_LIST_FOR_CONVERSATION = text(
+    "SELECT id, job_id, account_id, operation, model, pricing_version, "
+    "input_tokens, output_tokens, cost_micros, latency_ms, outcome, created_at "
+    "FROM trialscribe.provider_calls "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id "
+    "ORDER BY created_at, id"
+)
+
+
+@dataclass(frozen=True)
+class ProviderCallListRecord:
+    """Public metering columns for one stored provider attempt."""
+
+    id: UUID
+    job_id: UUID | None
+    account_id: UUID | None
+    operation: str
+    model: str
+    pricing_version: str
+    input_tokens: int
+    output_tokens: int
+    cost_micros: int
+    latency_ms: int
+    outcome: str
+    created_at: datetime
 
 
 class ProviderCallRepository:
@@ -103,6 +146,66 @@ class ProviderCallRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def get_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> tuple[str, datetime] | None:
+        """Load title and activity for this organization and conversation."""
+
+        result = await self._session.execute(
+            _GET_CONVERSATION,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return str(row["title"]), row["last_activity_at"]
+
+    async def summarize_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> tuple[int, int, int, datetime | None]:
+        """Sum stored micros and tokens for one conversation, tenant-scoped."""
+
+        result = await self._session.execute(
+            _SUMMARIZE_CONVERSATION,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            return 0, 0, 0, None
+        updated_at = row["updated_at"]
+        return (
+            int(row["cost_micros"]),
+            int(row["input_tokens"]),
+            int(row["output_tokens"]),
+            updated_at,
+        )
+
+    async def list_for_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[ProviderCallListRecord]:
+        """List a conversation's calls in the order they happened."""
+
+        result = await self._session.execute(
+            _LIST_FOR_CONVERSATION,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        return [_list_record(row) for row in result.mappings()]
+
 
 class PostgresUsageRecorder:
     """UsageRecorder that writes each attempt in its own short transaction."""
@@ -138,6 +241,33 @@ def _from_record(record: ProviderCallRecord) -> ProviderCall:
         cost_micros=record.cost_micros,
         latency_ms=record.latency_ms,
         outcome=record.outcome,
+    )
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else UUID(str(value))
+
+
+def _list_record(row: Mapping[str, object]) -> ProviderCallListRecord:
+    call_id = row["id"]
+    created_at = row["created_at"]
+    if not isinstance(created_at, datetime):
+        raise TypeError("provider call created_at must be a datetime")
+    return ProviderCallListRecord(
+        id=call_id if isinstance(call_id, UUID) else UUID(str(call_id)),
+        job_id=_optional_uuid(row["job_id"]),
+        account_id=_optional_uuid(row["account_id"]),
+        operation=str(row["operation"]),
+        model=str(row["model"]),
+        pricing_version=str(row["pricing_version"]),
+        input_tokens=int(row["input_tokens"]),
+        output_tokens=int(row["output_tokens"]),
+        cost_micros=int(row["cost_micros"]),
+        latency_ms=int(row["latency_ms"]),
+        outcome=str(row["outcome"]),
+        created_at=created_at,
     )
 
 

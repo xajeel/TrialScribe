@@ -5,19 +5,23 @@ from uuid import UUID, uuid4
 from sqlalchemy.dialects import postgresql
 
 from trialscribe_worker.models.provider_call import ProviderCall
+from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import ProviderCallRepository
 from trialscribe_worker.utils.enum import ProviderOperation, ProviderOutcome
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000401")
 JOB_ID = UUID("00000000-0000-4000-8000-000000000402")
+CONVERSATION_ID = UUID("00000000-0000-4000-8000-000000000403")
 
 
 class RecordingSession:
     def __init__(self) -> None:
         self.statements: list[Any] = []
+        self.executed = 0
 
-    async def execute(self, statement: Any) -> Any:
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
         self.statements.append(statement)
+        self.executed += 1
         raise _Captured
 
 
@@ -75,3 +79,33 @@ def test_find_and_list_statements_are_tenant_scoped() -> None:
     assert "organization_id" in sql
     assert "job_id" in sql
     assert "ORDER BY" in sql
+
+
+def test_conversation_usage_statements_are_tenant_scoped() -> None:
+    session = RecordingSession()
+    repository = ProviderCallRepository(session)  # type: ignore[arg-type]
+    for method in (
+        repository.get_conversation,
+        repository.summarize_conversation,
+        repository.list_for_conversation,
+    ):
+        session.statements.clear()
+        try:
+            asyncio.run(method(ORGANIZATION_ID, CONVERSATION_ID))
+        except _Captured:
+            pass
+        sql = compiled(session.statements[0]).lower()
+        assert "organization_id" in sql
+        assert "conversation_id" in sql
+        assert "prompt" not in sql
+        assert "content" not in sql
+
+
+def test_list_usage_jobs_skips_empty_ids() -> None:
+    session = RecordingSession()
+    repository = JobRepository(session)  # type: ignore[arg-type]
+    result = asyncio.run(
+        repository.list_usage_jobs(ORGANIZATION_ID, CONVERSATION_ID, [])
+    )
+    assert result == []
+    assert session.executed == 0

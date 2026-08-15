@@ -14,11 +14,14 @@ import {
   REVIEW_USAGE_EMPTY,
   REVIEW_USAGE_RUNNING,
   REVIEW_USAGE_VIEW,
-  emptyUsageView,
   type UsageView,
 } from "../product/deliveryAuditReviewFixtures";
 import { REVIEW_CONVERSATION } from "../product/workspaceReviewFixtures";
 import { useProtocolOverview } from "../workspace/useProtocolOverview";
+import {
+  USAGE_LOAD_ERROR,
+  useProtocolUsage,
+} from "../workspace/useProtocolUsage";
 
 export type UsageReviewState =
   | "populated"
@@ -76,6 +79,12 @@ export function UsagePage({
     reviewing ? null : (conversationId ?? null),
     authorizedFetch,
   );
+  const usage = useProtocolUsage({
+    organizationId: reviewing ? null : (liveOrganization?.id ?? null),
+    conversationId: reviewing ? null : (conversationId ?? null),
+    fetcher: authorizedFetch,
+    enabled: !reviewing,
+  });
   const [filters, setFilters] = useState<UsageFiltersValue>(() =>
     review === "filtered"
       ? { ...DEFAULT_USAGE_FILTERS, outcome: "attention" }
@@ -88,12 +97,10 @@ export function UsagePage({
     : (conversationId ?? "");
   const protocolTitle = reviewing
     ? REVIEW_CONVERSATION.title
-    : (overview.conversation?.title ?? "Protocol workspace");
-  const view = reviewing
-    ? usageForReview(review)
-    : overview.conversation === null
-      ? null
-      : emptyUsageView(overview.conversation.id, overview.conversation.title);
+    : (usage.view?.protocolTitle ??
+      overview.conversation?.title ??
+      "Protocol workspace");
+  const view = reviewing ? usageForReview(review) : usage.view;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -135,7 +142,7 @@ export function UsagePage({
           </p>
         )}
 
-        {!reviewing && overview.status === "loading" && (
+        {!reviewing && usage.loading && view === null && (
           <div className="delivery-sheet__state">
             <LoadingState label="Loading workspace usage…" />
           </div>
@@ -148,16 +155,15 @@ export function UsagePage({
             />
           </div>
         )}
+        {!reviewing && overview.status !== "error" && usage.error && (
+          <div className="delivery-sheet__state">
+            <ErrorState message={USAGE_LOAD_ERROR} onRetry={usage.retry} />
+          </div>
+        )}
 
         {view !== null && (
           <div className="delivery-sheet__body">
             <UsageSummary view={view} />
-            {!reviewing && (
-              <p className="usage-page__availability" role="status">
-                Provider usage records are not connected to this frontend yet.
-                No cost or model activity is being inferred.
-              </p>
-            )}
             {view.fixtureNote !== undefined && (
               <p className="delivery-sheet__fixture">{view.fixtureNote}</p>
             )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Conversation, M11Section } from "../api/types";
+import type { Conversation, M11Section, UsageRecord } from "../api/types";
 import {
   REVIEW_EXPORT_EMPTY,
   REVIEW_EXPORT_VIEW,
@@ -9,6 +9,7 @@ import {
   emptyUsageView,
   exportViewFromWorkspace,
   formatCostMicros,
+  usageViewFromApi,
 } from "./deliveryAuditReviewFixtures";
 
 const conversation: Conversation = {
@@ -95,5 +96,46 @@ describe("delivery audit fixtures", () => {
     expect(view.summary.totalCostMicros).toBe(0);
     expect(view.summary.generationCount).toBe(0);
     expect(view.generations).toEqual([]);
+  });
+
+  it("maps stored usage totals without inventing collaborator names", () => {
+    const record: UsageRecord = {
+      protocol_title: "AURORA-301",
+      protocol_id: "conversation-1",
+      summary: {
+        total_cost_micros: 4,
+        input_tokens: 20,
+        output_tokens: 10,
+        successful_jobs: 1,
+        failed_or_cancelled: 0,
+        generation_count: 1,
+        pricing_basis: "Versioned provider pricing",
+        updated_at: "2026-08-13T12:00:00Z",
+      },
+      generations: [
+        {
+          id: "job-1",
+          job_id: "job-1",
+          scope: "Section 6",
+          section_numbers: ["6"],
+          requester: "You",
+          model: "fake-chat",
+          input_tokens: 20,
+          output_tokens: 10,
+          latency_ms: 6,
+          outcome: "complete",
+          cost_micros: 4,
+          pricing_version: "2026-08-13",
+          started_at: "2026-08-13T12:00:00Z",
+          completed_at: "2026-08-13T12:00:01Z",
+          provider_calls: [],
+        },
+      ],
+    };
+    const view = usageViewFromApi(record);
+
+    expect(view.summary.totalCostMicros).toBe(4);
+    expect(formatCostMicros(view.summary.totalCostMicros)).toBe(formatCostMicros(4));
+    expect(view.generations[0]?.requester).toBe("You");
   });
 });
