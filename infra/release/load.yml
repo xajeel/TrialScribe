@@ -1,0 +1,5 @@
+services:
+  gateway:
+    environment:
+      GATEWAY_RATE_LIMIT_REQUESTS: "100000"
+      GATEWAY_RATE_LIMIT_AUTH_REQUESTS: "10000"

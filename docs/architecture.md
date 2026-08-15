@@ -23,31 +23,19 @@ user session:
 State (`AgentState` in `trialscribe_ai/models/schemas.py`) flows through the graph: query →
 sections → written texts.
 
-### Session model
+### v1 production
 
-The FastAPI service (`trialscribe_ai/api/app.py`, `trialscribe_ai/api/sessions.py`) keeps
-per-session state in memory: an `EvidenceDatabase` instance, a compiled agent graph, uploaded
-document paths, and the trial-design summary. Sessions expire after 2 hours of inactivity via
-a background cleanup task. This in-memory model is intentionally simple for a single-instance
-deployment — see the Roadmap below for how it evolves.
-
-### Interim frontend
-
-`frontend/streamlit-ui` is a thin Streamlit app that drives the same agent pipeline directly
-(without going through the FastAPI session API) for local demos and manual testing.
+v1 production is the Docker Compose **release** profile (`./scripts.sh release up`): one
+host runs the data stores, a migrate gate, the API gateway, auth, user, AI, worker, jobs
+reader, and the nginx-hosted React website. Host `uvicorn` processes are a local development
+path. Operator steps (backup, restore, upgrade, rollback, capacity) live in
+[operations.md](operations.md).
 
 ### Repository tooling structure
 
-`backend/` is a self-contained uv workspace: `backend/pyproject.toml` is the workspace root,
-with `services/ai-engine` as its sole member. `frontend/streamlit-ui` is deliberately **not**
-part of that workspace — it's a standalone uv project with its own lockfile, depending on
-`trialscribe-ai` via an editable path dependency (`../../backend/services/ai-engine`). This
-keeps `backend/` purely Python-tooled and `frontend/` free to become a Node/React project
-without the two toolchains ever needing to share a workspace root.
-
-One consequence: because it resolves its own dependency graph independently, `ai-engine`'s
-`pyproject.toml` pins upper bounds on every dependency (not just lower bounds) so a fresh
-resolve in either project lands on the same tested version set instead of drifting apart.
+`backend/` is a self-contained uv workspace: `backend/pyproject.toml` is the workspace root
+for every Python service. `frontend/web` is a standalone npm project, so the two toolchains
+never share a workspace root.
 
 ## Roadmap
 
@@ -60,8 +48,8 @@ The monorepo layout anticipates the following services as independent, addable u
 - **`worker-service`** — background job execution (e.g. Celery/Redis or ARQ) so long-running
   protocol generation runs outside the request/response cycle, with status polling instead of
   a blocking `generate-report` call.
-- **`frontend/web`** — a React + TypeScript SPA replacing the Streamlit UI as the primary
-  frontend, talking to the AI engine (and eventually the other services) over HTTP.
+- **`frontend/web`** — the React + TypeScript application, talking to backend services
+  through the API gateway.
 - **API gateway** — once multiple backend services exist, a gateway/reverse proxy in front of
   them for unified routing, auth enforcement, and rate limiting.
 

@@ -13,6 +13,7 @@ from trialscribe_gateway.utils.constant import (
     CACHE_CONTROL_VALUE,
     CONTENT_SECURITY_POLICY_HEADER,
     CONTENT_SECURITY_POLICY_VALUE,
+    DOCS_CONTENT_SECURITY_POLICY_VALUE,
     CONTENT_TYPE_OPTIONS_HEADER,
     CONTENT_TYPE_OPTIONS_VALUE,
     FRAME_OPTIONS_HEADER,
@@ -79,6 +80,27 @@ def _assert_secure_headers(headers: object) -> None:
     assert headers[CACHE_CONTROL_HEADER] == CACHE_CONTROL_VALUE
     assert headers[CONTENT_SECURITY_POLICY_HEADER] == CONTENT_SECURITY_POLICY_VALUE
     assert headers[PERMISSIONS_POLICY_HEADER] == PERMISSIONS_POLICY_VALUE
+
+
+def test_docs_allow_swagger_assets_under_a_narrower_csp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_client_factory(monkeypatch)
+    application = app_module.create_app(gateway_settings())
+
+    with TestClient(application) as client:
+        docs = client.get("/docs")
+        spec = client.get("/openapi.json")
+
+    assert docs.status_code == 200
+    assert "swagger-ui" in docs.text
+    assert docs.headers[CONTENT_SECURITY_POLICY_HEADER] == (
+        DOCS_CONTENT_SECURITY_POLICY_VALUE
+    )
+    assert spec.status_code == 200
+    assert spec.headers[CONTENT_SECURITY_POLICY_HEADER] == (
+        DOCS_CONTENT_SECURITY_POLICY_VALUE
+    )
 
 
 def test_health_and_metrics_carry_secure_headers(

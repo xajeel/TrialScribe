@@ -22,6 +22,9 @@ from trialscribe_gateway.utils.constant import (
     APP_TITLE,
     APP_VERSION,
     AUTH_ROUTE_PREFIX,
+    CONTENT_SECURITY_POLICY_VALUE,
+    DOCS_CONTENT_SECURITY_POLICY_VALUE,
+    DOCS_PATHS,
     LIVENESS_STATUS,
     RATE_LIMIT_EXEMPT_PATHS,
     RATE_LIMIT_FAMILY_API,
@@ -98,7 +101,14 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
 
     def _finalize(request: Request, response: Response) -> Response:
         response.headers[REQUEST_ID_HEADER] = str(request.state.request_id)
-        apply_secure_headers(response)
+        apply_secure_headers(
+            response,
+            content_security_policy=(
+                DOCS_CONTENT_SECURITY_POLICY_VALUE
+                if request.url.path in DOCS_PATHS
+                else CONTENT_SECURITY_POLICY_VALUE
+            ),
+        )
         return response
 
     def _rate_limit(request: Request) -> Response | None:
