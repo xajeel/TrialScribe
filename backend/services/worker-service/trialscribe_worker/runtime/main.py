@@ -43,6 +43,7 @@ from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
 from trialscribe_worker.pipelines.research_web import run_research_web_job
 from trialscribe_worker.pipelines.validate_readiness import run_validate_readiness_job
+from trialscribe_worker.pipelines.export_protocol import run_export_protocol_job
 from trialscribe_worker.providers.factory import build_providers
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
@@ -135,6 +136,9 @@ async def run_worker(stop: asyncio.Event) -> None:
     async def run_validate_readiness(context: JobContext) -> None:
         await run_validate_readiness_job(context, runtime)
 
+    async def run_export_protocol(context: JobContext) -> None:
+        await run_export_protocol_job(context, runtime)
+
     runner = JobRunner(
         runtime,
         progress,
@@ -147,6 +151,7 @@ async def run_worker(stop: asyncio.Event) -> None:
             JobKind.RESEARCH_WEB: run_research_web,
             JobKind.GENERATE_SECTIONS: run_generate_sections,
             JobKind.VALIDATE_READINESS: run_validate_readiness,
+            JobKind.EXPORT_PROTOCOL: run_export_protocol,
         },
     )
 

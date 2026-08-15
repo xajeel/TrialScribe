@@ -44,6 +44,7 @@ class JobKind(StrEnum):
     RESEARCH_WEB = "research_web"
     GENERATE_SECTIONS = "generate_sections"
     VALIDATE_READINESS = "validate_readiness"
+    EXPORT_PROTOCOL = "export_protocol"
 
 
 class GenerationAttemptStatus(StrEnum):

@@ -204,3 +204,26 @@ class ReadinessResponse(BaseModel):
     summary: ReadinessSummaryPublic
     issues: list[ReadinessIssuePublic]
     sections: list[ReadinessSectionPublic]
+
+
+class ExportItemPublic(BaseModel):
+    """One stored export. File bytes are never included."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    id: UUID
+    job_id: UUID
+    filename: str
+    byte_size: int
+    section_count: int
+    scope: str
+    created_at: datetime
+    requester: str
+
+
+class ExportListResponse(BaseModel):
+    """Newest export metadata for one conversation."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    items: list[ExportItemPublic]

@@ -33,3 +33,26 @@ def apply_citations(text: str, allowed: set[UUID]) -> str:
         return ""
 
     return _CITE_PATTERN.sub(replace, text)
+
+
+def apply_numbered_citations(text: str, ordered: list[UUID]) -> str:
+    """Replace remaining citation markers with 1-based numbers from `ordered`."""
+
+    index = {chunk_id: number for number, chunk_id in enumerate(ordered, start=1)}
+
+    def replace(match: re.Match[str]) -> str:
+        chunk_id = UUID(match.group(1))
+        number = index.get(chunk_id)
+        if number is None:
+            return ""
+        return f"[{number}]"
+
+    return _CITE_PATTERN.sub(replace, apply_citations(text, set(ordered)))
+
+
+def number_citations(text: str, allowed: set[UUID]) -> tuple[str, list[UUID]]:
+    """Drop unresolved markers and number the rest in first-appearance order."""
+
+    cleaned = apply_citations(text, allowed)
+    ordered = parse_cite_ids(cleaned)
+    return apply_numbered_citations(text, ordered), ordered

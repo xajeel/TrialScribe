@@ -316,6 +316,21 @@ export interface ReadinessRecord {
   sections: ReadinessSectionRecord[];
 }
 
+export interface ExportRecord {
+  id: string;
+  job_id: string;
+  filename: string;
+  byte_size: number;
+  section_count: number;
+  scope: "done-only" | "include-drafts";
+  created_at: string;
+  requester: string;
+}
+
+export interface ExportList {
+  items: ExportRecord[];
+}
+
 export interface EvidenceChunkRecord {
   id: string;
   conversation_id: string;

@@ -14,6 +14,7 @@ dependencies = [
     "redis==8.0.1",
     "trialscribe-database",
     "trialscribe-events",
+    "python-docx==1.2.0",
 ]
 
 [build-system]

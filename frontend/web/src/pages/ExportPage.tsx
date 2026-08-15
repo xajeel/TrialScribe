@@ -26,6 +26,7 @@ import {
   type ExportScope,
 } from "../product/deliveryAuditReviewFixtures";
 import { REVIEW_CONVERSATION } from "../product/workspaceReviewFixtures";
+import { useProtocolExport } from "../workspace/useProtocolExport";
 import { useProtocolOverview } from "../workspace/useProtocolOverview";
 
 function ReviewBackdrop({ protocolTitle }: { protocolTitle: string }) {
@@ -64,7 +65,7 @@ export function ExportPage({
 }: {
   review?: ExportReviewState;
 } = {}) {
-  const { authorizedFetch } = useAuth();
+  const { authorizedFetch, account } = useAuth();
   const org = useOrganization();
   const navigate = useNavigate();
   const { conversationId } = useParams();
@@ -88,6 +89,13 @@ export function ExportPage({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ReadinessRecord | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(false);
+  const liveExport = useProtocolExport({
+    organizationId: reviewing ? null : (liveOrganization?.id ?? null),
+    conversationId: reviewing ? null : (conversationId ?? null),
+    fetcher: authorizedFetch,
+    enabled: !reviewing,
+    accountId: reviewing ? null : (account?.id ?? null),
+  });
   const routeConversationId = reviewing
     ? REVIEW_CONVERSATION.id
     : (conversationId ?? "");
@@ -100,6 +108,20 @@ export function ExportPage({
   const protocolTitle = reviewing
     ? REVIEW_CONVERSATION.title
     : (overview.conversation?.title ?? "Protocol workspace");
+  const activePanel = reviewing ? panelState : liveExport.panelState;
+  const hasMatchingSections =
+    view !== null &&
+    (scope === "include-drafts"
+      ? view.sections.length > 0
+      : view.doneSections > 0);
+  const liveExportReady =
+    reviewing ||
+    (!readinessLoading &&
+      readiness !== null &&
+      readiness.checked &&
+      !readiness.stale &&
+      (scope === "include-drafts" || readiness.ready));
+  const statusMessage = reviewing ? feedback : liveExport.error;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -140,17 +162,24 @@ export function ExportPage({
     navigate(`/workspace/${encodeURIComponent(routeConversationId)}`);
   };
   const handleDownload = (file: ExportFileView) => {
-    if (!reviewing) return;
-    setFeedback(
-      `${file.filename} was not downloaded. This is a development review demonstration.`,
-    );
+    if (reviewing) {
+      setFeedback(
+        `${file.filename} was not downloaded. This is a development review demonstration.`,
+      );
+      return;
+    }
+    void liveExport.download(file);
   };
   const handleGenerate = () => {
-    if (!reviewing || view === null || view.doneSections === 0) return;
-    setFeedback(
-      "Development review only — no export job was created or persisted.",
-    );
-    setPanelState("building");
+    if (view === null || !hasMatchingSections) return;
+    if (reviewing) {
+      setFeedback(
+        "Development review only — no export job was created or persisted.",
+      );
+      setPanelState("building");
+      return;
+    }
+    void liveExport.start(scope);
   };
 
   return (
@@ -180,9 +209,9 @@ export function ExportPage({
           </button>
         </header>
 
-        {feedback !== null && (
+        {statusMessage !== null && (
           <p className="delivery-sheet__feedback" role="status">
-            {feedback}
+            {statusMessage}
           </p>
         )}
 
@@ -200,7 +229,7 @@ export function ExportPage({
           </div>
         )}
 
-        {view !== null && panelState === "configuration" && (
+        {view !== null && activePanel === "configuration" && (
           <>
             <div className="delivery-sheet__body">
               <ExportProtocolSummary view={view} />
@@ -211,7 +240,7 @@ export function ExportPage({
               />
               <SectionManifest sections={view.sections} scope={scope} />
               <ExportContentSummary view={view} scope={scope} />
-              {view.doneSections === 0 ? (
+              {!hasMatchingSections ? (
                 <div className="export-page__unavailable" role="status">
                   <strong>Complete at least one section before exporting.</strong>
                   <button
@@ -225,12 +254,7 @@ export function ExportPage({
                     Review sections
                   </button>
                 </div>
-              ) : !reviewing &&
-                (readinessLoading ||
-                  readiness === null ||
-                  !readiness.checked ||
-                  !readiness.ready ||
-                  readiness.stale) ? (
+              ) : !liveExportReady ? (
                 <div className="export-page__unavailable" role="status">
                   <strong>Protocol is not ready to export.</strong>
                   <button
@@ -244,11 +268,6 @@ export function ExportPage({
                     Review readiness
                   </button>
                 </div>
-              ) : !reviewing ? (
-                <p className="export-page__unavailable" role="status">
-                  Export generation is not connected yet. You can inspect the
-                  current document scope here without changing protocol content.
-                </p>
               ) : null}
               {view.fixtureNote !== undefined && (
                 <p className="delivery-sheet__fixture">{view.fixtureNote}</p>
@@ -259,7 +278,11 @@ export function ExportPage({
               <button
                 className="delivery-button--primary"
                 type="button"
-                disabled={!reviewing || view.doneSections === 0}
+                disabled={
+                  !hasMatchingSections ||
+                  !liveExportReady ||
+                  (!reviewing && liveExport.pending)
+                }
                 onClick={handleGenerate}
               >
                 Generate DOCX
@@ -268,23 +291,39 @@ export function ExportPage({
           </>
         )}
 
-        {panelState !== "configuration" && (
+        {activePanel !== "configuration" && (
           <div className="delivery-sheet__body delivery-sheet__body--job">
             <ExportJobPanel
-              state={panelState}
-              job={REVIEW_EXPORT_JOB}
+              state={activePanel}
+              job={
+                reviewing
+                  ? REVIEW_EXPORT_JOB
+                  : (liveExport.jobView ?? REVIEW_EXPORT_JOB)
+              }
               onClose={close}
               onRetry={() => {
-                setFeedback("Retry started in this development review only.");
-                setPanelState("building");
+                if (reviewing) {
+                  setFeedback("Retry started in this development review only.");
+                  setPanelState("building");
+                  return;
+                }
+                void liveExport.retry();
               }}
               onBack={() => {
-                setFeedback(null);
-                setPanelState("configuration");
+                if (reviewing) {
+                  setFeedback(null);
+                  setPanelState("configuration");
+                  return;
+                }
+                liveExport.back();
               }}
               onCreateAnother={() => {
-                setFeedback(null);
-                setPanelState("configuration");
+                if (reviewing) {
+                  setFeedback(null);
+                  setPanelState("configuration");
+                  return;
+                }
+                liveExport.createAnother();
               }}
               onDownload={handleDownload}
             />
