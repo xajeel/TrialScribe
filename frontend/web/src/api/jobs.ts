@@ -4,11 +4,13 @@ import type {
   GenerationAttemptList,
   JobList,
   JobRecord,
+  ReadinessRecord,
   RewriteOptionList,
   UsageRecord,
 } from "./types";
 
 export const GENERATE_SECTIONS_JOB_KIND = "generate_sections";
+export const VALIDATE_READINESS_JOB_KIND = "validate_readiness";
 export const GENERATE_JOB_POLL_MS = 1000;
 
 const JOBS_PATH = "/v1/jobs";
@@ -107,6 +109,18 @@ export function getUsage(
 ): Promise<UsageRecord> {
   const query = new URLSearchParams({ conversation_id: conversationId });
   return fetcher<UsageRecord>(`${JOBS_PATH}/usage?${query.toString()}`, {
+    headers: organizationHeaders(organizationId),
+  });
+}
+
+/** Read the newest stored protocol readiness snapshot for one conversation. */
+export function getReadiness(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<ReadinessRecord> {
+  const query = new URLSearchParams({ conversation_id: conversationId });
+  return fetcher<ReadinessRecord>(`${JOBS_PATH}/readiness?${query.toString()}`, {
     headers: organizationHeaders(organizationId),
   });
 }

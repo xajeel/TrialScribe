@@ -5,9 +5,11 @@ import type { AuthorizedFetch } from "../auth/AuthContext";
 import {
   GENERATE_JOB_POLL_MS,
   GENERATE_SECTIONS_JOB_KIND,
+  VALIDATE_READINESS_JOB_KIND,
   cancelJob,
   createJob,
   getJob,
+  getReadiness,
   getUsage,
   listJobAttempts,
   listJobs,
@@ -36,6 +38,7 @@ function capturingFetcher(): {
 describe("jobs api", () => {
   it("exports the generate-sections kind and one-second poll interval", () => {
     expect(GENERATE_SECTIONS_JOB_KIND).toBe("generate_sections");
+    expect(VALIDATE_READINESS_JOB_KIND).toBe("validate_readiness");
     expect(GENERATE_JOB_POLL_MS).toBe(1000);
   });
 
@@ -106,6 +109,15 @@ describe("jobs api", () => {
     await getUsage(fetcher, ORGANIZATION_ID, CONVERSATION_ID);
 
     expect(calls[0]?.path).toContain("/v1/jobs/usage?");
+    expect(calls[0]?.path).toContain(`conversation_id=${CONVERSATION_ID}`);
+  });
+
+  it("reads readiness with conversation_id", async () => {
+    const { fetcher, calls } = capturingFetcher();
+
+    await getReadiness(fetcher, ORGANIZATION_ID, CONVERSATION_ID);
+
+    expect(calls[0]?.path).toContain("/v1/jobs/readiness?");
     expect(calls[0]?.path).toContain(`conversation_id=${CONVERSATION_ID}`);
   });
 });

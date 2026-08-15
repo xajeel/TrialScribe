@@ -184,3 +184,23 @@ def test_rewrite_options_are_empty_when_content_is_not_options_json() -> None:
     )
 
     assert rows == []
+
+
+def test_latest_by_section_select_omits_prompt_and_content() -> None:
+    session = ReturningSession([])
+    repository = GenerationOutcomeRepository(session)  # type: ignore[arg-type]
+
+    asyncio.run(repository.latest_by_section(ORGANIZATION_ID, CONVERSATION_ID))
+
+    sql = compiled(session.statement).lower()
+    assert "trialscribe.section_generation_attempts" in sql
+    assert "distinct on" in sql
+    assert "organization_id" in sql
+    assert "conversation_id" in sql
+    assert "created_at" in sql
+    assert "prompt" not in sql
+    assert "content" not in sql
+    assert session.parameters == {
+        "organization_id": ORGANIZATION_ID,
+        "conversation_id": CONVERSATION_ID,
+    }

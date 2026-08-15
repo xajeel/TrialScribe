@@ -119,7 +119,7 @@ describe("AuthoringPane rewrite control", () => {
     );
     const textarea = screen.getByLabelText("Section content") as HTMLTextAreaElement;
     await user.click(textarea);
-    textarea.setSelectionRange(0, 7);
+    (textarea as HTMLTextAreaElement).setSelectionRange(0, 7);
     fireEvent.select(textarea);
     await user.click(screen.getByRole("button", { name: "Rewrite section" }));
     expect(onRewrite).toHaveBeenCalledWith({ start: 0, end: 7 });

@@ -262,6 +262,60 @@ export interface UsageRecord {
   generations: UsageGenerationRecord[];
 }
 
+export interface ReadinessCitationRecord {
+  resolved: number;
+  needing_review: number;
+}
+
+export interface ReadinessIssueRecord {
+  id: string;
+  title: string;
+  detail: string;
+  severity: string;
+  code: string;
+  action: string;
+  action_label: string;
+  section_number: string | null;
+}
+
+export interface ReadinessSummaryRecord {
+  total_sections: number;
+  done_sections: number;
+  draft_sections: number;
+  ready_sources: number;
+  pending_sources: number;
+  failed_sources: number;
+  latest_activity: string | null;
+  citations: ReadinessCitationRecord | null;
+}
+
+export interface ReadinessSectionRecord {
+  id: string;
+  section_number: string;
+  title: string;
+  position: number;
+  status: string;
+  revision: number;
+  words: number;
+  updated_at: string;
+  content: string;
+  issues: ReadinessIssueRecord[];
+  citations: ReadinessCitationRecord | null;
+}
+
+export interface ReadinessRecord {
+  checked: boolean;
+  ready: boolean;
+  stale: boolean;
+  job_id: string | null;
+  computed_at: string | null;
+  protocol_title: string;
+  protocol_id: string;
+  summary: ReadinessSummaryRecord;
+  issues: ReadinessIssueRecord[];
+  sections: ReadinessSectionRecord[];
+}
+
 export interface EvidenceChunkRecord {
   id: string;
   conversation_id: string;

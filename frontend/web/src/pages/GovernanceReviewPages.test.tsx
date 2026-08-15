@@ -73,6 +73,9 @@ describe("governance review pages", () => {
 
     renderApp({ route: "/review/readiness/retry" });
     expect(await screen.findByRole("status")).toHaveTextContent("Retrying in this review demonstration");
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/v1/jobs")),
+    ).toBe(false);
   });
 
   it("completes retry locally without claiming a stored change", async () => {

@@ -1,7 +1,7 @@
 """HTTP routes for requesting, reading, and stopping background work."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,12 +28,18 @@ from trialscribe_worker.repositories.generation_outcomes import GenerationOutcom
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import ProviderCallRepository
+from trialscribe_worker.repositories.protocol_readiness import ProtocolReadinessRepository
 from trialscribe_worker.schemas.job import (
     GenerationAttemptListResponse,
     GenerationAttemptPublic,
     JobCreateRequest,
     JobListResponse,
     JobResponse,
+    ReadinessCitationPublic,
+    ReadinessIssuePublic,
+    ReadinessResponse,
+    ReadinessSectionPublic,
+    ReadinessSummaryPublic,
     RewriteOptionListResponse,
     RewriteOptionPublic,
     UsageResponse,
@@ -45,6 +51,13 @@ from trialscribe_worker.utils.constant import (
     JOB_LIST_DEFAULT_LIMIT,
     JOB_LIST_MAX_LIMIT,
     JOB_LIST_MIN_LIMIT,
+    STALE_CHECK_ACTION,
+    STALE_CHECK_ACTION_LABEL,
+    STALE_CHECK_CODE,
+    STALE_CHECK_DETAIL,
+    STALE_CHECK_ISSUE_ID,
+    STALE_CHECK_SEVERITY,
+    STALE_CHECK_TITLE,
 )
 
 logger = get_event_logger(__name__)
@@ -73,6 +86,42 @@ def _service(
         OutboxRepository(session),
         registry,
         topic_prefix,
+    )
+
+
+def _empty_readiness(conversation_id: UUID, title: str) -> ReadinessResponse:
+    return ReadinessResponse(
+        checked=False,
+        ready=False,
+        stale=False,
+        job_id=None,
+        computed_at=None,
+        protocol_title=title,
+        protocol_id=conversation_id,
+        summary=ReadinessSummaryPublic(
+            total_sections=0,
+            done_sections=0,
+            draft_sections=0,
+            ready_sources=0,
+            pending_sources=0,
+            failed_sources=0,
+            latest_activity=None,
+            citations=ReadinessCitationPublic(resolved=0, needing_review=0),
+        ),
+        issues=[],
+        sections=[],
+    )
+
+
+def _stale_issue() -> ReadinessIssuePublic:
+    return ReadinessIssuePublic(
+        id=STALE_CHECK_ISSUE_ID,
+        title=STALE_CHECK_TITLE,
+        detail=STALE_CHECK_DETAIL,
+        severity=STALE_CHECK_SEVERITY,
+        code=STALE_CHECK_CODE,
+        action=STALE_CHECK_ACTION,
+        action_label=STALE_CHECK_ACTION_LABEL,
     )
 
 
@@ -185,6 +234,47 @@ async def list_rewrite_options(
         )
     return RewriteOptionListResponse(
         items=[RewriteOptionPublic(id=option_id, text=text) for option_id, text in rows]
+    )
+
+
+@router.get("/readiness", response_model=ReadinessResponse)
+async def read_readiness(
+    organization_id: OrganizationId,
+    runtime: Runtime,
+    conversation_id: Annotated[UUID, Query()],
+) -> ReadinessResponse:
+    async with runtime.transaction() as session:
+        store = ProtocolReadinessRepository(session)
+        conversation = await store.get_conversation(
+            organization_id,
+            conversation_id,
+        )
+        if conversation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=CONVERSATION_NOT_FOUND_DETAIL,
+            )
+        title, last_activity_at = conversation
+        row = await store.get_latest(organization_id, conversation_id)
+    if row is None:
+        return _empty_readiness(conversation_id, title)
+    issues = [ReadinessIssuePublic.model_validate(item) for item in row["issues"]]
+    stale = last_activity_at > row["activity_at"]
+    if stale:
+        issues = [_stale_issue(), *issues]
+    return ReadinessResponse(
+        checked=True,
+        ready=False if stale else bool(row["ready"]),
+        stale=stale,
+        job_id=cast(UUID, row["job_id"]),
+        computed_at=cast(datetime, row["computed_at"]),
+        protocol_title=str(row["protocol_title"]),
+        protocol_id=conversation_id,
+        summary=ReadinessSummaryPublic.model_validate(row["summary"]),
+        issues=issues,
+        sections=[
+            ReadinessSectionPublic.model_validate(item) for item in row["sections"]
+        ],
     )
 
 

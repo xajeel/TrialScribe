@@ -12,7 +12,6 @@ import { WorkspaceChrome } from "../components/WorkspaceChrome";
 import { useOrganization } from "../org/useOrganization";
 import {
   readinessForReview,
-  readinessFromWorkspace,
   type GovernanceReviewState,
   type ReadinessIssueView,
   type ReadinessView,
@@ -21,7 +20,7 @@ import {
   REVIEW_CONVERSATION,
   REVIEW_WORKSPACE_ORGANIZATION,
 } from "../product/workspaceReviewFixtures";
-import { useProtocolOverview } from "../workspace/useProtocolOverview";
+import { useProtocolReadiness } from "../workspace/useProtocolReadiness";
 
 export type ReadinessReview =
   | "incomplete"
@@ -34,7 +33,7 @@ function reviewState(review: ReadinessReview): GovernanceReviewState {
   return `readiness-${review}`;
 }
 
-/** Page 15: factual editorial readiness over current sections and sources. */
+/** Page 15: stored protocol readiness snapshot, or a local review fixture. */
 export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
   const { authorizedFetch } = useAuth();
   const org = useOrganization();
@@ -48,11 +47,12 @@ export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
   const organization = reviewing
     ? REVIEW_WORKSPACE_ORGANIZATION
     : liveOrganization;
-  const overview = useProtocolOverview(
-    reviewing ? null : (liveOrganization?.id ?? null),
-    reviewing ? null : (conversationId ?? null),
-    authorizedFetch,
-  );
+  const readiness = useProtocolReadiness({
+    organizationId: reviewing ? null : (liveOrganization?.id ?? null),
+    conversationId: reviewing ? null : (conversationId ?? null),
+    fetcher: authorizedFetch,
+    enabled: !reviewing && liveOrganization !== null,
+  });
   const [reviewData, setReviewData] = useState<ReadinessView | null>(() =>
     review === undefined ? null : readinessForReview(reviewState(review)),
   );
@@ -60,21 +60,13 @@ export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
     review === "filtered" || review === "attention" ? "attention" : "all",
   );
   const [feedback, setFeedback] = useState<string | null>(null);
-  const data = reviewing
-    ? reviewData
-    : overview.conversation === null
-      ? null
-      : readinessFromWorkspace(
-          overview.conversation,
-          overview.sections,
-          overview.documents,
-        );
+  const data = reviewing ? reviewData : readiness.view;
   const routeConversationId = reviewing
     ? REVIEW_CONVERSATION.id
     : (conversationId ?? "");
   const protocolTitle = reviewing
     ? REVIEW_CONVERSATION.title
-    : (overview.conversation?.title ?? "Protocol workspace");
+    : (readiness.record?.protocol_title ?? "Protocol workspace");
 
   const navigateToSection = (sectionNumber: string) =>
     navigate(
@@ -87,6 +79,10 @@ export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
     }
     if (issue.action === "open-section" && issue.sectionNumber !== undefined) {
       navigateToSection(issue.sectionNumber);
+      return;
+    }
+    if (issue.action === "retry-check") {
+      void readiness.start();
       return;
     }
     if (!reviewing) return;
@@ -140,23 +136,34 @@ export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
             <h1>Protocol readiness</h1>
             <p>Check current section and source facts before preparing an export.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate(`/workspace/${encodeURIComponent(routeConversationId)}`)}
-          >
-            Return to workspace
-          </button>
+          <div>
+            {!reviewing && (
+              <button
+                type="button"
+                disabled={readiness.pending || readiness.loading}
+                onClick={() => void readiness.start()}
+              >
+                {readiness.record?.checked === true ? "Check again" : "Check protocol"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate(`/workspace/${encodeURIComponent(routeConversationId)}`)}
+            >
+              Return to workspace
+            </button>
+          </div>
         </header>
-        {!reviewing && overview.status === "loading" && (
+        {!reviewing && readiness.loading && (
           <section className="readiness-review__state" aria-label="Protocol readiness">
             <LoadingState label="Loading protocol readiness…" />
           </section>
         )}
-        {!reviewing && overview.status === "error" && (
+        {!reviewing && readiness.error !== null && (
           <section className="readiness-review__state" aria-label="Protocol readiness">
             <ErrorState
-              message="Could not load protocol readiness."
-              onRetry={overview.retry}
+              message={readiness.error}
+              onRetry={readiness.retry}
             />
           </section>
         )}
@@ -180,6 +187,7 @@ export function ReadinessPage({ review }: { review?: ReadinessReview } = {}) {
                   `/workspace/${encodeURIComponent(routeConversationId)}/revisions?section=${encodeURIComponent(section.sectionNumber)}`,
                 )
               }
+              checking={readiness.pending}
             />
           </>
         )}

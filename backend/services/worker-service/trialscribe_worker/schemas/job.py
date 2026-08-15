@@ -136,3 +136,71 @@ class UsageResponse(BaseModel):
     protocol_id: UUID
     summary: UsageSummaryPublic
     generations: list[UsageGenerationPublic]
+
+
+class ReadinessIssuePublic(BaseModel):
+    """One finding. Chapter text is only included on section rows."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    id: str
+    title: str
+    detail: str
+    severity: str
+    code: str
+    action: str
+    action_label: str
+    section_number: str | None = None
+
+
+class ReadinessCitationPublic(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    resolved: int
+    needing_review: int
+
+
+class ReadinessSummaryPublic(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    total_sections: int
+    done_sections: int
+    draft_sections: int
+    ready_sources: int
+    pending_sources: int
+    failed_sources: int
+    latest_activity: str | None
+    citations: ReadinessCitationPublic | None = None
+
+
+class ReadinessSectionPublic(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    id: str
+    section_number: str
+    title: str
+    position: int
+    status: str
+    revision: int
+    words: int
+    updated_at: str
+    content: str
+    issues: list[ReadinessIssuePublic]
+    citations: ReadinessCitationPublic | None = None
+
+
+class ReadinessResponse(BaseModel):
+    """The newest stored check, or an unchecked empty result."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    checked: bool
+    ready: bool
+    stale: bool
+    job_id: UUID | None
+    computed_at: datetime | None
+    protocol_title: str
+    protocol_id: UUID
+    summary: ReadinessSummaryPublic
+    issues: list[ReadinessIssuePublic]
+    sections: list[ReadinessSectionPublic]

@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -31,6 +31,7 @@ from trialscribe_worker.repositories.provider_calls import ProviderCallListRecor
 from trialscribe_worker.utils.constant import (
     GENERATE_SECTIONS_KIND,
     PRICING_VERSION_DEFAULT,
+    VALIDATE_READINESS_KIND,
 )
 from trialscribe_worker.utils.enum import JobKind, JobStatus, ProviderOperation, ProviderOutcome
 
@@ -249,6 +250,34 @@ class FakeProviderCallRepository:
         return row
 
 
+class FakeProtocolReadinessRepository:
+    """Stand in for the newest stored readiness snapshot."""
+
+    conversation: tuple[str, datetime] | None = ("AURORA-301", NOW)
+    latest: dict[str, object] | None = None
+
+    def __init__(self, _session: Any) -> None:
+        pass
+
+    async def get_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> tuple[str, datetime] | None:
+        if organization_id != ORGANIZATION_ID or conversation_id != CONVERSATION_ID:
+            return None
+        return type(self).conversation
+
+    async def get_latest(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> dict[str, object] | None:
+        if organization_id != ORGANIZATION_ID or conversation_id != CONVERSATION_ID:
+            return None
+        return type(self).latest
+
+
 class FakeOutbox:
     """Record what the request stored beside its ticket."""
 
@@ -292,6 +321,8 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeProviderCallRepository.conversations = {}
     FakeProviderCallRepository.calls = []
     FakeProviderCallRepository.writes = 0
+    FakeProtocolReadinessRepository.conversation = ("AURORA-301", NOW)
+    FakeProtocolReadinessRepository.latest = None
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
         FakeJobRepository,
@@ -303,6 +334,10 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.ProviderCallRepository",
         FakeProviderCallRepository,
+    )
+    monkeypatch.setattr(
+        "trialscribe_worker.api.jobs.ProtocolReadinessRepository",
+        FakeProtocolReadinessRepository,
     )
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.OutboxRepository",
@@ -437,6 +472,7 @@ def test_generate_sections_is_an_accepted_job_kind(api: dict[str, Any]) -> None:
     )
 
     assert JobKind.GENERATE_SECTIONS.value == GENERATE_SECTIONS_KIND
+    assert JobKind.VALIDATE_READINESS.value == VALIDATE_READINESS_KIND
     assert response.status_code == 202
     assert response.json()["kind"] == GENERATE_SECTIONS_KIND
 
@@ -780,3 +816,128 @@ def test_usage_for_another_organization_is_not_found(api: dict[str, Any]) -> Non
 
     assert response.status_code == 404
     assert response.json() == {"detail": "conversation not found"}
+
+
+def _ready_snapshot() -> dict[str, object]:
+    job_id = uuid4()
+    return {
+        "id": uuid4(),
+        "organization_id": ORGANIZATION_ID,
+        "conversation_id": CONVERSATION_ID,
+        "job_id": job_id,
+        "ready": True,
+        "computed_at": NOW,
+        "activity_at": NOW,
+        "protocol_title": "AURORA-301",
+        "summary": {
+            "total_sections": 14,
+            "done_sections": 14,
+            "draft_sections": 0,
+            "ready_sources": 1,
+            "pending_sources": 0,
+            "failed_sources": 0,
+            "latest_activity": NOW.isoformat(),
+            "citations": {"resolved": 1, "needing_review": 0},
+        },
+        "issues": [],
+        "sections": [
+            {
+                "id": str(uuid4()),
+                "section_number": "1",
+                "title": "Protocol Summary",
+                "position": 1,
+                "status": "done",
+                "revision": 1,
+                "words": 2,
+                "updated_at": NOW.isoformat(),
+                "content": "Done text",
+                "issues": [],
+                "citations": {"resolved": 0, "needing_review": 0},
+            }
+        ],
+    }
+
+
+def test_readiness_for_an_unknown_conversation_is_not_found(
+    api: dict[str, Any],
+) -> None:
+    response = api["client"].get(
+        "/jobs/readiness",
+        params={"conversation_id": str(uuid4())},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversation not found"}
+
+
+def test_readiness_without_a_snapshot_is_unchecked(api: dict[str, Any]) -> None:
+    response = api["client"].get(
+        "/jobs/readiness",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["checked"] is False
+    assert body["ready"] is False
+    assert body["stale"] is False
+    assert body["job_id"] is None
+    assert body["protocol_id"] == str(CONVERSATION_ID)
+    assert body["protocol_title"] == "AURORA-301"
+    assert body["issues"] == []
+    assert body["sections"] == []
+    assert body["summary"]["total_sections"] == 0
+    assert body["summary"]["done_sections"] == 0
+
+
+def test_readiness_returns_the_latest_snapshot_counts(api: dict[str, Any]) -> None:
+    snapshot = _ready_snapshot()
+    FakeProtocolReadinessRepository.latest = snapshot
+
+    response = api["client"].get(
+        "/jobs/readiness",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["checked"] is True
+    assert body["ready"] is True
+    assert body["stale"] is False
+    assert body["job_id"] == str(snapshot["job_id"])
+    assert body["summary"]["total_sections"] == 14
+    assert body["summary"]["done_sections"] == 14
+    assert body["summary"]["ready_sources"] == 1
+    assert body["issues"] == []
+    missing = api["client"].get(f"/jobs/{uuid4()}", headers=HEADERS)
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "job not found"}
+
+
+def test_readiness_marks_a_newer_protocol_stale_and_not_ready(
+    api: dict[str, Any],
+) -> None:
+    FakeProtocolReadinessRepository.conversation = (
+        "AURORA-301",
+        NOW + timedelta(hours=1),
+    )
+    FakeProtocolReadinessRepository.latest = _ready_snapshot()
+
+    response = api["client"].get(
+        "/jobs/readiness",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["checked"] is True
+    assert body["ready"] is False
+    assert body["stale"] is True
+    assert body["issues"][0]["id"] == "stale-check"
+    assert body["issues"][0]["title"] == "Protocol changed since last check"
+    assert body["issues"][0]["action"] == "retry-check"
+    assert body["issues"][0]["action_label"] == "Check again"

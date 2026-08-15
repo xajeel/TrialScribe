@@ -7,6 +7,8 @@ LIVENESS_STATUS = "ok"
 READINESS_STATUS = "ready"
 
 GENERATE_SECTIONS_KIND = "generate_sections"
+VALIDATE_READINESS_KIND = "validate_readiness"
+READINESS_SCOPE_INDEX = "ix_protocol_readiness_checks_scope"
 JOB_LIST_MIN_LIMIT = 1
 JOB_LIST_MAX_LIMIT = 20
 JOB_LIST_DEFAULT_LIMIT = 1
@@ -40,6 +42,13 @@ JOB_CANCEL_FLAG_VALUE = "1"
 
 JOB_NOT_FOUND_DETAIL = "job not found"
 CONVERSATION_NOT_FOUND_DETAIL = "conversation not found"
+STALE_CHECK_ISSUE_ID = "stale-check"
+STALE_CHECK_TITLE = "Protocol changed since last check"
+STALE_CHECK_DETAIL = "Run the check again to score the current protocol."
+STALE_CHECK_SEVERITY = "warning"
+STALE_CHECK_CODE = "stale_check"
+STALE_CHECK_ACTION = "retry-check"
+STALE_CHECK_ACTION_LABEL = "Check again"
 JOB_ALREADY_FINISHED_DETAIL = "job already finished"
 INVALID_JOB_INPUT_DETAIL = "job request is not valid"
 UNSUPPORTED_JOB_KIND_DETAIL = "job kind is not supported"
