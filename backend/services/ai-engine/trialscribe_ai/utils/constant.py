@@ -49,6 +49,8 @@ ALLOWED_DOCUMENT_CONTENT_TYPES = frozenset(
 )
 TRIAL_DATA_CONTENT_TYPE = "application/json"
 PDF_MAGIC = b"%PDF-"
+PDF_HEADER_SCAN_BYTES = 1024
+PDF_FORBIDDEN_HEADER_MARKERS = (b"<html", b"<!doctype", b"<script")
 
 MAX_EVIDENCE_CHUNK_IDS = 32
 INVALID_EVIDENCE_IDS_DETAIL = "evidence request is not valid"

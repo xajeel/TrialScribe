@@ -345,5 +345,15 @@ def test_done_section_is_not_overwritten() -> None:
             )
         )
     )
+    asyncio.run(
+        generate_sections_pipeline(
+            _context(
+                evidence=evidence,
+                gateway=_gateway(CitingChat()),
+                sections=sections,
+                attempts=MemoryAttempts(),
+            )
+        )
+    )
     assert sections.rows["5"].content == "keep me"
     assert sections.rows["5"].current_revision == 0

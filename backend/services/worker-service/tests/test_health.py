@@ -60,3 +60,6 @@ def test_readiness_failure_is_safe() -> None:
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Service temporarily unavailable"}
+    assert "Redis" not in response.text
+    assert "postgres" not in response.text.lower()
+    assert "Traceback" not in response.text

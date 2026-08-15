@@ -72,10 +72,25 @@ def test_formatter_emits_one_json_object_per_record() -> None:
 
 
 def test_formatter_drops_any_field_outside_the_allow_list() -> None:
-    document = format_record({"topic": "trialscribe.job.v1", "payload": "do-not-print"})
+    document = format_record(
+        {
+            "topic": "trialscribe.job.v1",
+            "payload": "do-not-print",
+            "prompt": "system secret prompt",
+            "api_key": "sk-secret",
+            "evidence": "cited passage",
+            "password": "hunter2",
+        }
+    )
 
     assert "payload" not in document
+    assert "prompt" not in document
+    assert "api_key" not in document
+    assert "evidence" not in document
+    assert "password" not in document
     assert "do-not-print" not in json.dumps(document)
+    assert "sk-secret" not in json.dumps(document)
+    assert "hunter2" not in json.dumps(document)
 
 
 def test_logger_writes_structured_json_without_duplicating_to_the_root() -> None:

@@ -42,6 +42,10 @@ class GatewaySettings(BaseSettings):
     auth_jwt_public_key_b64: str
     auth_jwt_issuer: str
     auth_jwt_audience: str
+    gateway_rate_limit_requests: int = 120
+    gateway_rate_limit_auth_requests: int = 20
+    gateway_rate_limit_window_seconds: int = 60
+    gateway_rate_limit_hmac_secret: str | None = None
 
     @field_validator("gateway_cors_origins", mode="before")
     @classmethod
@@ -81,6 +85,33 @@ class GatewaySettings(BaseSettings):
         if value <= 0:
             raise ValueError("gateway upstream timeouts must be positive")
         return value
+
+    @field_validator(
+        "gateway_rate_limit_requests",
+        "gateway_rate_limit_auth_requests",
+        "gateway_rate_limit_window_seconds",
+    )
+    @classmethod
+    def validate_positive_rate_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("gateway rate limits must be positive")
+        return value
+
+    @field_validator("gateway_rate_limit_hmac_secret", mode="before")
+    @classmethod
+    def normalize_rate_limit_secret(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if len(stripped) < 16:
+            raise ValueError(
+                "gateway rate limit HMAC secret must be at least 16 characters"
+            )
+        return stripped
 
     @model_validator(mode="after")
     def validate_service_urls(self) -> Self:

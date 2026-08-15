@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -14,18 +16,27 @@ from trialscribe_observability.http import instrument_app
 from trialscribe_gateway.api.routes import router as gateway_router
 from trialscribe_gateway.config import GatewaySettings
 from trialscribe_gateway.models.health import HealthResponse
+from trialscribe_gateway.security.headers import apply_secure_headers
+from trialscribe_gateway.security.rate_limit import GatewayRateLimiter
 from trialscribe_gateway.utils.constant import (
     APP_TITLE,
     APP_VERSION,
+    AUTH_ROUTE_PREFIX,
     LIVENESS_STATUS,
+    RATE_LIMIT_EXEMPT_PATHS,
+    RATE_LIMIT_FAMILY_API,
+    RATE_LIMIT_FAMILY_AUTH,
     READINESS_STATUS,
     REQUEST_ID_HEADER,
+    RETRY_AFTER_HEADER,
     SERVICE_NAME,
     SERVICE_UNAVAILABLE_DETAIL,
+    TOO_MANY_REQUESTS_DETAIL,
     UPSTREAM_TIMEOUT_DETAIL,
 )
 from trialscribe_gateway.utils.exceptions import (
     GatewayServiceError,
+    RateLimitedError,
     UpstreamTimeoutError,
     UpstreamUnavailableError,
 )
@@ -55,6 +66,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         )
         client = httpx.AsyncClient(timeout=timeout, follow_redirects=False)
         application.state.gateway_settings = runtime_settings
+        application.state.rate_limiter = GatewayRateLimiter(runtime_settings)
         application.state.http_client = client
         application.state.gateway_ready = True
         try:
@@ -84,15 +96,50 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         expose_headers=[REQUEST_ID_HEADER],
     )
 
+    def _finalize(request: Request, response: Response) -> Response:
+        response.headers[REQUEST_ID_HEADER] = str(request.state.request_id)
+        apply_secure_headers(response)
+        return response
+
+    def _rate_limit(request: Request) -> Response | None:
+        if request.method == "OPTIONS" or request.url.path in RATE_LIMIT_EXEMPT_PATHS:
+            return None
+        limiter = getattr(request.app.state, "rate_limiter", None)
+        if limiter is None:
+            return None
+        family = (
+            RATE_LIMIT_FAMILY_AUTH
+            if request.url.path.startswith(AUTH_ROUTE_PREFIX)
+            else RATE_LIMIT_FAMILY_API
+        )
+        host = request.client.host if request.client is not None else "unknown"
+        try:
+            decision = limiter.check(host, family)
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": SERVICE_UNAVAILABLE_DETAIL},
+            )
+        if decision.allowed:
+            return None
+        retry_after = decision.retry_after or 1
+        return JSONResponse(
+            status_code=429,
+            content={"detail": TOO_MANY_REQUESTS_DETAIL},
+            headers={RETRY_AFTER_HEADER: str(retry_after)},
+        )
+
     @application.middleware("http")
     async def correlation_id(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         request.state.request_id = _request_id(request.headers.get(REQUEST_ID_HEADER))
+        limited = _rate_limit(request)
+        if limited is not None:
+            return _finalize(request, limited)
         response = await call_next(request)
-        response.headers[REQUEST_ID_HEADER] = str(request.state.request_id)
-        return response
+        return _finalize(request, response)
 
     @application.exception_handler(UpstreamUnavailableError)
     async def upstream_unavailable(
@@ -114,6 +161,17 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
             content={"detail": UPSTREAM_TIMEOUT_DETAIL},
         )
 
+    @application.exception_handler(RateLimitedError)
+    async def rate_limited(
+        _request: Request,
+        error: RateLimitedError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": TOO_MANY_REQUESTS_DETAIL},
+            headers={RETRY_AFTER_HEADER: str(error.retry_after)},
+        )
+
     @application.exception_handler(GatewayServiceError)
     async def gateway_error(
         _request: Request,
@@ -122,6 +180,20 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=503,
             content={"detail": SERVICE_UNAVAILABLE_DETAIL},
+        )
+
+    @application.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        _request: Request,
+        error: RequestValidationError,
+    ) -> JSONResponse:
+        safe_errors = [
+            {key: value for key, value in item.items() if key != "input"}
+            for item in error.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(safe_errors)},
         )
 
     @application.get("/health/live", response_model=HealthResponse)

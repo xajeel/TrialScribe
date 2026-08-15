@@ -255,6 +255,29 @@ def test_upload_rejects_invalid_content() -> None:
     assert events.deleted == []
 
 
+def test_upload_rejects_html_pdf_polyglot() -> None:
+    service, _, _, events = service_with(make_conversation())
+
+    with pytest.raises(UnsupportedDocumentTypeError):
+        upload(
+            service,
+            kind=DocumentKind.RESEARCH_DOCUMENT,
+            filename="polyglot.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-1.7\n<!DOCTYPE html>",
+        )
+    with pytest.raises(UnsupportedDocumentTypeError):
+        upload(
+            service,
+            kind=DocumentKind.RESEARCH_DOCUMENT,
+            filename="script.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-1.7\n<script>",
+        )
+
+    assert events.uploaded == []
+
+
 def test_upload_requires_accessible_active_conversation() -> None:
     absent_service, _, _, absent_events = service_with(None)
     with pytest.raises(ConversationNotFoundError):

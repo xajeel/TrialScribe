@@ -1,4 +1,5 @@
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -73,6 +74,72 @@ def test_valid_token_returns_strict_claims() -> None:
 
     assert claims.sub == ACCOUNT_ID
     assert claims.type == "access"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def unsigned_none_token() -> str:
+    claims = {
+        "sub": str(ACCOUNT_ID),
+        "iss": "trialscribe-auth",
+        "aud": "trialscribe-api",
+        "iat": int(NOW.timestamp()),
+        "nbf": int(NOW.timestamp()),
+        "exp": int((NOW + timedelta(minutes=15)).timestamp()),
+        "jti": str(uuid4()),
+        "type": "access",
+    }
+    header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
+    payload = _b64url(json.dumps(claims).encode())
+    return f"{header}.{payload}."
+
+
+def test_alg_none_token_is_rejected() -> None:
+    settings, _private_key = settings_and_key()
+
+    with pytest.raises(InvalidAccessTokenError) as captured:
+        AccessTokenVerifier(settings).decode_access_token(unsigned_none_token(), NOW)
+
+    assert str(captured.value) == ""
+
+
+def test_hs256_token_using_the_public_key_is_rejected() -> None:
+    settings, private_key = settings_and_key()
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    token = jwt.encode(
+        {
+            "sub": str(ACCOUNT_ID),
+            "iss": "trialscribe-auth",
+            "aud": "trialscribe-api",
+            "iat": NOW,
+            "nbf": NOW,
+            "exp": NOW + timedelta(minutes=15),
+            "jti": str(uuid4()),
+            "type": "access",
+        },
+        public_bytes,
+        algorithm="HS256",
+    )
+
+    with pytest.raises(InvalidAccessTokenError) as captured:
+        AccessTokenVerifier(settings).decode_access_token(token, NOW)
+
+    assert str(captured.value) == ""
+
+
+def test_token_signed_by_a_different_key_is_rejected() -> None:
+    settings, _private_key = settings_and_key()
+    foreign = Ed25519PrivateKey.generate()
+
+    with pytest.raises(InvalidAccessTokenError) as captured:
+        AccessTokenVerifier(settings).decode_access_token(issue_token(foreign), NOW)
+
+    assert str(captured.value) == ""
 
 
 @pytest.mark.parametrize(
