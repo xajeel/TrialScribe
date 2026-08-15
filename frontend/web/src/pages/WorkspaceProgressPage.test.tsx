@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
@@ -117,6 +117,27 @@ function progressHandler(
         throw new Error("not initialized");
       }
       return { catalog_version: "2025.1", items: sections };
+    }
+    if (path === "/v1/jobs" && method === "POST") {
+      return {
+        id: "job-gen-1",
+        status: "queued",
+        progress: 0,
+        kind: "generate_sections",
+        conversation_id: CONVERSATION_ID,
+        organization_id: ORGANIZATION_ID,
+        attempt: 0,
+        error_code: null,
+        correlation_id: "corr-1",
+        created_at: "2026-08-14T09:00:00Z",
+        updated_at: "2026-08-14T09:00:00Z",
+        started_at: null,
+        finished_at: null,
+        cancel_requested_at: null,
+      };
+    }
+    if (path.startsWith("/v1/jobs")) {
+      return { items: [] };
     }
     if (path === `/v1/ai/conversations/${CONVERSATION_ID}`) {
       return conversation();
@@ -340,7 +361,7 @@ describe("WorkspaceProgressPage", () => {
     expect(await screen.findByText("Protocol Summary")).toBeInTheDocument();
   });
 
-  it("shows no percentage, token, cost, or retry-section control", async () => {
+  it("shows no percentage, token, or cost when generation is idle", async () => {
     const fetcher = createFetcher(
       progressHandler(MIXED, [
         documentRecord("doc-1"),
@@ -359,5 +380,162 @@ describe("WorkspaceProgressPage", () => {
     expect(
       screen.queryByRole("button", { name: /retry section/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("retries one failed section from the progress table", async () => {
+    const failedJob = {
+      id: "job-failed",
+      organization_id: ORGANIZATION_ID,
+      conversation_id: CONVERSATION_ID,
+      kind: "generate_sections",
+      status: "failed",
+      progress: 50,
+      attempt: 1,
+      error_code: "handler_failed",
+      correlation_id: "corr-1",
+      created_at: "2026-08-14T09:00:00Z",
+      updated_at: "2026-08-14T09:00:00Z",
+      started_at: "2026-08-14T09:00:01Z",
+      finished_at: "2026-08-14T09:01:00Z",
+      cancel_requested_at: null,
+    };
+    const calls: Array<{ path: string; options: RequestOptions | undefined }> = [];
+    const fetcher = createFetcher((path, options) => {
+      calls.push({ path, options });
+      if (path.startsWith("/v1/jobs?") ) {
+        return { items: [failedJob] };
+      }
+      if (path === "/v1/jobs/job-failed/attempts") {
+        return {
+          items: [
+            {
+              section_number: "5",
+              status: "failed",
+              error_code: "provider_failed",
+              citation_ids: [],
+              attempt: 1,
+            },
+          ],
+        };
+      }
+      if (path === "/v1/jobs" && options?.method === "POST") {
+        return { ...failedJob, id: "job-retry", status: "queued" };
+      }
+      return progressHandler(
+        [
+          ...MIXED,
+          section("5", "Trial Population", "empty"),
+        ],
+        [documentRecord("doc-1")],
+      )(path, options);
+    });
+    const user = userEvent.setup();
+
+    renderProgress(fetcher);
+
+    const retry = await screen.findByRole("button", { name: "Retry section 5" });
+    await user.click(retry);
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.path === "/v1/jobs" &&
+            call.options?.method === "POST" &&
+            (call.options.json as { parameters?: { section_numbers?: string[] } })
+              .parameters?.section_numbers?.[0] === "5",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("shows writing progress while a job is in flight", async () => {
+    const running = {
+      id: "job-run",
+      organization_id: ORGANIZATION_ID,
+      conversation_id: CONVERSATION_ID,
+      kind: "generate_sections",
+      status: "running",
+      progress: 40,
+      attempt: 1,
+      error_code: null,
+      correlation_id: "corr-1",
+      created_at: "2026-08-14T09:00:00Z",
+      updated_at: "2026-08-14T09:00:00Z",
+      started_at: "2026-08-14T09:00:01Z",
+      finished_at: null,
+      cancel_requested_at: null,
+    };
+    const fetcher = createFetcher((path, options) => {
+      if (path.startsWith("/v1/jobs?")) {
+        return { items: [running] };
+      }
+      if (path === "/v1/jobs/job-run/attempts") {
+        return { items: [] };
+      }
+      if (path === "/v1/jobs/job-run") {
+        return running;
+      }
+      return progressHandler(MIXED, [documentRecord("doc-1")])(path, options);
+    });
+
+    renderProgress(fetcher);
+
+    expect(await screen.findByText(/Writing… 40%/)).toBeInTheDocument();
+  });
+
+  it("keeps the review fixture fetch-free and without retry controls", async () => {
+    const { fetcher, calls } = (() => {
+      const recorded: Array<{ path: string }> = [];
+      return {
+        calls: recorded,
+        fetcher: createFetcher((path) => {
+          recorded.push({ path });
+          throw new Error(`review must not fetch ${path}`);
+        }),
+      };
+    })();
+    const auth: AuthContextValue = {
+      status: "authenticated",
+      account: {
+        id: ACCOUNT_ID,
+        email: "author@example.com",
+        is_active: true,
+        created_at: "2026-07-28T08:00:00Z",
+      },
+      signIn: async () => undefined,
+      signOut: async () => undefined,
+      authorizedFetch: fetcher,
+    };
+    const organization: OrganizationContextValue = {
+      status: "ready",
+      organizations: [],
+      activeId: null,
+      action: "idle",
+      feedback: null,
+      select: () => undefined,
+      reload: () => undefined,
+      create: async () => true,
+      join: async () => true,
+      dismissFeedback: () => undefined,
+    };
+
+    render(
+      <MemoryRouter>
+        <AuthContext.Provider value={auth}>
+          <OrganizationContext.Provider value={organization}>
+            <WorkspaceProgressPage review="populated" />
+          </OrganizationContext.Provider>
+        </AuthContext.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Protocol progress" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /retry section/i }),
+    ).not.toBeInTheDocument();
+    expect(calls).toHaveLength(0);
   });
 });

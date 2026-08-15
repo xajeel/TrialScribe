@@ -13,6 +13,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_worker.models.job import Job
+from trialscribe_worker.utils.constant import (
+    JOB_LIST_MAX_LIMIT,
+    JOB_LIST_MIN_LIMIT,
+)
 from trialscribe_worker.utils.enum import (
     CLAIMABLE_JOB_STATUSES,
     TERMINAL_JOB_STATUSES,
@@ -45,6 +49,25 @@ class JobRepository:
             Job.organization_id == organization_id,
         )
         return (await self._session.execute(statement)).scalars().first()
+
+    async def list_for_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        kind: str | None,
+        limit: int,
+    ) -> list[Job]:
+        """Return the newest tickets for one conversation, newest first."""
+
+        bounded = min(max(limit, JOB_LIST_MIN_LIMIT), JOB_LIST_MAX_LIMIT)
+        statement = select(Job).where(
+            Job.organization_id == organization_id,
+            Job.conversation_id == conversation_id,
+        )
+        if kind is not None:
+            statement = statement.where(Job.kind == kind)
+        statement = statement.order_by(Job.created_at.desc()).limit(bounded)
+        return list((await self._session.execute(statement)).scalars().all())
 
     async def exists(self, job_id: UUID) -> bool:
         """Report whether a job row has landed yet, ignoring tenancy."""

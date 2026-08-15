@@ -49,6 +49,10 @@ class EmptyDocumentError(AIEngineError):
     """An uploaded document has no content."""
 
 
+class InvalidEvidenceRequestError(AIEngineError):
+    """An evidence chunk request named no ids, too many ids, or invalid ids."""
+
+
 class M11SectionNotFoundError(AIEngineError):
     """The M11 section is absent or outside the caller's conversation."""
 

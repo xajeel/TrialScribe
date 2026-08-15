@@ -1,7 +1,8 @@
 import { useParams } from "react-router-dom";
 
-import type { DocumentRecord } from "../api/types";
+import type { DocumentRecord, GenerationAttemptRecord } from "../api/types";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { generationErrorText } from "../components/GenerationPanel";
 import {
   SectionProgressList,
   sectionStateOf,
@@ -10,6 +11,7 @@ import { SourceProcessingList } from "../components/SourceProcessingList";
 import { WorkspaceChrome } from "../components/WorkspaceChrome";
 import { useAuth } from "../auth/useAuth";
 import { useOrganization } from "../org/useOrganization";
+import { isJobInFlight, useGenerationJob } from "../workspace/useGenerationJob";
 import { useProtocolOverview } from "../workspace/useProtocolOverview";
 import {
   REVIEW_WORKSPACE_ORGANIZATION,
@@ -26,8 +28,11 @@ interface AttentionItem {
   tone: "error" | "warning";
 }
 
-/** Attention rows built only from real document states, never from generation. */
-export function attentionFor(documents: DocumentRecord[]): AttentionItem[] {
+/** Attention rows from real document states, then generation failures. */
+export function attentionFor(
+  documents: DocumentRecord[],
+  attempts: GenerationAttemptRecord[] = [],
+): AttentionItem[] {
   const failed = documents
     .filter((record) => record.status === "failed")
     .map((record) => ({
@@ -44,7 +49,15 @@ export function attentionFor(documents: DocumentRecord[]): AttentionItem[] {
       reason: "Still processing. It is not available to drafting yet.",
       tone: "warning" as const,
     }));
-  return [...failed, ...processing].slice(0, ATTENTION_LIMIT);
+  const generation = attempts
+    .filter((item) => item.status === "failed")
+    .map((item) => ({
+      id: `generation-${item.section_number}`,
+      filename: `Section ${item.section_number}`,
+      reason: generationErrorText(item.error_code),
+      tone: "error" as const,
+    }));
+  return [...failed, ...generation, ...processing].slice(0, ATTENTION_LIMIT);
 }
 
 function ProgressRule({ done, total }: { done: number; total: number }) {
@@ -89,6 +102,15 @@ export function WorkspaceProgressPage({
   );
   const sample = reviewing ? reviewProgress(review) : null;
   const overview = sample ?? live;
+  const generation = useGenerationJob({
+    organizationId: reviewing ? null : (liveActive?.id ?? null),
+    conversationId: reviewing ? null : (conversationId ?? null),
+    sections: overview.sections,
+    fetcher: authorizedFetch,
+    enabled: !reviewing && overview.status === "ready",
+    onTerminal: overview.retry,
+  });
+  const writing = isJobInFlight(generation.job?.status);
 
   const workspaceId = conversationId ?? overview.conversation?.id ?? "";
   const title = overview.conversation?.title ?? "Protocol workspace";
@@ -99,7 +121,7 @@ export function WorkspaceProgressPage({
   const notStarted = states.filter((state) => state === "empty").length;
   const total = overview.sections.length;
   const allDone = total > 0 && done === total;
-  const attention = attentionFor(overview.documents);
+  const attention = attentionFor(overview.documents, generation.attempts);
 
   return (
     <div className="protocol-workspace">
@@ -123,6 +145,9 @@ export function WorkspaceProgressPage({
             <p className="protocol-workspace__lede">
               {done} done · {drafted} drafted · {notStarted} not started, of{" "}
               {total} sections.
+              {writing && generation.job !== null
+                ? ` Writing… ${generation.job.progress}%.`
+                : ""}
             </p>
           )}
         </div>
@@ -216,6 +241,14 @@ export function WorkspaceProgressPage({
               <SectionProgressList
                 sections={overview.sections}
                 conversationId={workspaceId}
+                attempts={generation.attempts}
+                onRetrySection={
+                  reviewing
+                    ? undefined
+                    : (sectionNumber) => {
+                        void generation.retryFailed(sectionNumber);
+                      }
+                }
               />
             </section>
 

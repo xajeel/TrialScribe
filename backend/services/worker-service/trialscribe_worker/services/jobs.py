@@ -15,7 +15,7 @@ from trialscribe_events.utils.constant import (
 from trialscribe_worker.models.job import Job
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
-from trialscribe_worker.schemas.job import JobCreateRequest, JobResponse
+from trialscribe_worker.schemas.job import JobCreateRequest, JobListResponse, JobResponse
 from trialscribe_worker.utils.constant import SERVICE_NAME
 from trialscribe_worker.utils.enum import JobKind, JobStatus
 from trialscribe_worker.utils.exceptions import (
@@ -87,6 +87,26 @@ class JobService:
         if job is None:
             raise JobNotFoundError
         return self._response(job, await self._progress.get_progress(job_id))
+
+    async def list_jobs(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        kind: str | None,
+        limit: int,
+    ) -> JobListResponse:
+        """Return the newest tickets for a conversation, with live progress."""
+
+        jobs = await self._jobs.list_for_conversation(
+            organization_id,
+            conversation_id,
+            kind,
+            limit,
+        )
+        items: list[JobResponse] = []
+        for job in jobs:
+            items.append(self._response(job, await self._progress.get_progress(job.id)))
+        return JobListResponse(items=items)
 
     async def cancel_job(
         self,

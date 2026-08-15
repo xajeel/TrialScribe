@@ -9804,6 +9804,77 @@ select:focus-visible {
   text-align: right;
 }
 
+.generation-panel__progress {
+  height: 0.55rem;
+  margin: 0.85rem 0 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #efe6d4;
+}
+
+.generation-panel__progress-bar {
+  display: block;
+  height: 100%;
+  background: #2f6f4e;
+}
+
+.generation-panel__alert {
+  margin: 0.7rem 0 0;
+  color: var(--library-error);
+  font-size: 0.84rem;
+}
+
+.generation-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 0.9rem 0 0;
+}
+
+.generation-panel__primary,
+.generation-panel__secondary {
+  min-height: 2.4rem;
+  padding: 0 1rem;
+  border-radius: var(--workspace-radius);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.generation-panel__primary {
+  border: 0;
+  background: var(--library-ink);
+  color: #fff;
+}
+
+.generation-panel__secondary {
+  border: 1px solid var(--library-line);
+  background: var(--library-raised);
+  color: var(--library-ink);
+}
+
+.generation-panel__primary:disabled,
+.generation-panel__secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.generation-panel__attempts {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+}
+
+.generation-panel__attempt-error {
+  display: block;
+  color: var(--library-error);
+  font-size: 0.8rem;
+}
+
 /* Progress summary and attention ------------------------------------------ */
 
 .progress-attention {
@@ -10023,6 +10094,26 @@ select:focus-visible {
 .section-progress__state--empty {
   background: #efeade;
   color: var(--library-muted);
+}
+
+.section-progress__retry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.section-progress__retry-button {
+  min-height: 1.9rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--library-line);
+  border-radius: var(--workspace-radius);
+  background: var(--library-raised);
+  color: var(--library-ink);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .section-progress__count {
@@ -11953,6 +12044,59 @@ select:focus-visible {
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 1.05rem;
   line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.cited-section__citation {
+  display: inline;
+  margin: 0 0.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid #d4c7a8;
+  border-radius: 0.25rem;
+  background: #f7f1e3;
+  color: #5a4a22;
+  font-family: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.citation-inspector {
+  min-width: 16rem;
+  padding: 1rem 1.1rem;
+  border-left: 1px solid var(--library-line);
+  background: #fbf8f1;
+}
+
+.citation-inspector__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.citation-inspector__header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.citation-inspector__facts {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.citation-inspector__facts dt {
+  color: var(--library-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.citation-inspector__facts dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 

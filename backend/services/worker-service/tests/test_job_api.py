@@ -23,12 +23,17 @@ from trialscribe_worker.api.dependencies import (
     get_registry,
 )
 from trialscribe_worker.models.job import Job
+from trialscribe_worker.repositories.generation_outcomes import GenerationAttemptOutcome
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
-from trialscribe_worker.utils.enum import JobStatus
+from trialscribe_worker.utils.constant import GENERATE_SECTIONS_KIND
+from trialscribe_worker.utils.enum import JobKind, JobStatus
 
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000041")
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000042")
+CONVERSATION_ID = UUID("00000000-0000-4000-8000-000000000043")
+OTHER_ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000044")
+CITE_ID = UUID("00000000-0000-4000-8000-000000000045")
 NOW = datetime(2026, 8, 9, 12, 0, 0, tzinfo=UTC)
 TTL_SECONDS = 3600
 HEADERS = {
@@ -89,6 +94,23 @@ class FakeJobRepository:
             return None
         return job
 
+    async def list_for_conversation(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        kind: str | None,
+        limit: int,
+    ) -> list[Job]:
+        jobs = [
+            job
+            for job in type(self).jobs.values()
+            if job.organization_id == organization_id
+            and job.conversation_id == conversation_id
+            and (kind is None or job.kind == kind)
+        ]
+        jobs.sort(key=lambda item: item.created_at, reverse=True)
+        return jobs[:limit]
+
     async def cancel_queued(
         self,
         organization_id: UUID,
@@ -115,6 +137,25 @@ class FakeJobRepository:
             return None
         job.cancel_requested_at = job.cancel_requested_at or now
         return job
+
+
+class FakeGenerationOutcomeRepository:
+    """Stand in for the raw-SQL attempt reader."""
+
+    rows: list[GenerationAttemptOutcome] = []
+    calls: list[tuple[UUID, UUID, UUID]] = []
+
+    def __init__(self, _session: Any) -> None:
+        pass
+
+    async def list_latest_for_job(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+        job_id: UUID,
+    ) -> list[GenerationAttemptOutcome]:
+        type(self).calls.append((organization_id, conversation_id, job_id))
+        return list(type(self).rows)
 
 
 class FakeOutbox:
@@ -154,9 +195,15 @@ class FakeRelay:
 def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeJobRepository.jobs = {}
     FakeOutbox.stored = []
+    FakeGenerationOutcomeRepository.rows = []
+    FakeGenerationOutcomeRepository.calls = []
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
         FakeJobRepository,
+    )
+    monkeypatch.setattr(
+        "trialscribe_worker.api.jobs.GenerationOutcomeRepository",
+        FakeGenerationOutcomeRepository,
     )
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.OutboxRepository",
@@ -276,6 +323,25 @@ def test_a_kind_this_worker_does_not_serve_is_rejected(api: dict[str, Any]) -> N
     assert response.json() == {"detail": "job kind is not supported"}
 
 
+def test_generate_sections_is_an_accepted_job_kind(api: dict[str, Any]) -> None:
+    response = api["client"].post(
+        "/jobs",
+        json={
+            "kind": GENERATE_SECTIONS_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {
+                "section_numbers": ["5"],
+                "expected_revisions": {"5": 0},
+            },
+        },
+        headers=HEADERS,
+    )
+
+    assert JobKind.GENERATE_SECTIONS.value == GENERATE_SECTIONS_KIND
+    assert response.status_code == 202
+    assert response.json()["kind"] == GENERATE_SECTIONS_KIND
+
+
 def test_an_unreachable_broker_no_longer_costs_the_caller_their_job(
     api: dict[str, Any],
 ) -> None:
@@ -326,3 +392,93 @@ def test_a_request_without_account_context_is_unauthenticated(
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid account context"}
+
+
+def test_listing_jobs_does_not_steal_a_job_id_read(api: dict[str, Any]) -> None:
+    created = api["client"].post(
+        "/jobs",
+        json={"kind": "probe", "conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    ).json()
+
+    listed = api["client"].get(
+        "/jobs",
+        params={
+            "conversation_id": str(CONVERSATION_ID),
+            "kind": "probe",
+            "limit": 1,
+        },
+        headers=HEADERS,
+    )
+    missing = api["client"].get(f"/jobs/{uuid4()}", headers=HEADERS)
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [created["id"]]
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "job not found"}
+
+
+def test_attempts_for_another_organization_are_not_found(api: dict[str, Any]) -> None:
+    created = api["client"].post(
+        "/jobs",
+        json={"kind": "probe", "conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    ).json()
+
+    response = api["client"].get(
+        f"/jobs/{created['id']}/attempts",
+        headers={
+            "X-TrialScribe-Account-ID": str(ACCOUNT_ID),
+            "X-TrialScribe-Organization-ID": str(OTHER_ORGANIZATION_ID),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "job not found"}
+    assert FakeGenerationOutcomeRepository.calls == []
+
+
+def test_attempts_are_empty_when_the_job_has_no_conversation(api: dict[str, Any]) -> None:
+    created = api["client"].post("/jobs", json={"kind": "probe"}, headers=HEADERS).json()
+
+    response = api["client"].get(f"/jobs/{created['id']}/attempts", headers=HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+    assert FakeGenerationOutcomeRepository.calls == []
+
+
+def test_attempts_return_the_latest_public_fields_only(api: dict[str, Any]) -> None:
+    created = api["client"].post(
+        "/jobs",
+        json={"kind": "probe", "conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    ).json()
+    FakeGenerationOutcomeRepository.rows = [
+        GenerationAttemptOutcome(
+            section_number="5",
+            status="failed",
+            error_code="provider_failed",
+            citation_ids=[CITE_ID],
+            attempt=2,
+        )
+    ]
+
+    response = api["client"].get(f"/jobs/{created['id']}/attempts", headers=HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "section_number": "5",
+                "status": "failed",
+                "error_code": "provider_failed",
+                "citation_ids": [str(CITE_ID)],
+                "attempt": 2,
+            }
+        ]
+    }
+    assert "prompt" not in response.text
+    assert FakeGenerationOutcomeRepository.calls == [
+        (ORGANIZATION_ID, CONVERSATION_ID, UUID(created["id"]))
+    ]

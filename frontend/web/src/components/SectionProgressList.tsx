@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 
-import type { M11Section } from "../api/types";
+import type { GenerationAttemptRecord, M11Section } from "../api/types";
 import { formatActivity } from "./ProtocolTable";
 
 export type SectionState = "done" | "drafted" | "empty";
@@ -29,10 +29,19 @@ const STATE_LABELS: Record<SectionState, string> = {
 export function SectionProgressList({
   sections,
   conversationId,
+  attempts = [],
+  onRetrySection,
 }: {
   sections: M11Section[];
   conversationId: string;
+  attempts?: GenerationAttemptRecord[];
+  onRetrySection?: (sectionNumber: string) => void;
 }) {
+  const failed = new Set(
+    attempts
+      .filter((item) => item.status === "failed")
+      .map((item) => item.section_number),
+  );
   return (
     <div className="section-progress">
       <table role="table">
@@ -73,11 +82,29 @@ export function SectionProgressList({
                   </Link>
                 </td>
                 <td role="cell" data-label="State">
-                  <span
-                    className={`section-progress__state section-progress__state--${state}`}
-                  >
-                    {STATE_LABELS[state]}
-                  </span>
+                  {failed.has(section.section_number) ? (
+                    <span className="section-progress__retry">
+                      <span className="section-progress__state section-progress__state--empty">
+                        Needs retry
+                      </span>
+                      {onRetrySection !== undefined && (
+                        <button
+                          type="button"
+                          className="section-progress__retry-button"
+                          aria-label={`Retry section ${section.section_number}`}
+                          onClick={() => onRetrySection(section.section_number)}
+                        >
+                          Retry
+                        </button>
+                      )}
+                    </span>
+                  ) : (
+                    <span
+                      className={`section-progress__state section-progress__state--${state}`}
+                    >
+                      {STATE_LABELS[state]}
+                    </span>
+                  )}
                 </td>
                 <td role="cell" data-label="Content">
                   {words === 0 ? (

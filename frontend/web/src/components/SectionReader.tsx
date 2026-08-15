@@ -1,6 +1,11 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
-import type { M11Section } from "../api/types";
+import { listEvidenceChunks } from "../api/evidence";
+import type { EvidenceChunkRecord, M11Section } from "../api/types";
+import type { AuthorizedFetch } from "../auth/AuthContext";
+import { splitCitedText } from "../citations/citeMarkers";
+import { CitationInspector } from "./CitationInspector";
+import { CitedSectionText } from "./CitedSectionText";
 
 /** Word count over the stored content, used for the reader's details list. */
 export function wordCountOf(content: string): number {
@@ -37,16 +42,25 @@ export function SectionReader({
   onOpenInEditor,
   onAddInstruction,
   onClose,
+  inspectCitations,
 }: {
   section: M11Section | null;
   returnFocusTo: HTMLElement | null;
   onOpenInEditor: (section: M11Section) => void;
   onAddInstruction: (section: M11Section) => void;
   onClose: () => void;
+  inspectCitations?: {
+    fetcher: AuthorizedFetch;
+    organizationId: string;
+    conversationId: string;
+  };
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
+  const [citationOpen, setCitationOpen] = useState(false);
+  const [citation, setCitation] = useState<EvidenceChunkRecord | null>(null);
+  const [citationMissing, setCitationMissing] = useState(false);
 
   useEffect(() => {
     if (section === null) {
@@ -81,6 +95,12 @@ export function SectionReader({
     };
   }, [returnFocusTo, section]);
 
+  useEffect(() => {
+    setCitationOpen(false);
+    setCitation(null);
+    setCitationMissing(false);
+  }, [section?.id]);
+
   if (section === null) {
     return null;
   }
@@ -88,6 +108,32 @@ export function SectionReader({
   const done = section.status === "done";
   const empty = section.content.trim() === "";
   const words = wordCountOf(section.content);
+  const clickableCitations =
+    inspectCitations !== undefined &&
+    splitCitedText(section.content).some((part) => part.type === "cite");
+
+  async function inspectCitation(id: string) {
+    if (inspectCitations === undefined) {
+      return;
+    }
+    setCitationOpen(true);
+    setCitation(null);
+    setCitationMissing(false);
+    try {
+      const page = await listEvidenceChunks(
+        inspectCitations.fetcher,
+        inspectCitations.organizationId,
+        inspectCitations.conversationId,
+        [id],
+      );
+      const chunk = page.items[0] ?? null;
+      setCitation(chunk);
+      setCitationMissing(chunk === null);
+    } catch {
+      setCitation(null);
+      setCitationMissing(true);
+    }
+  }
 
   return (
     <dialog
@@ -190,10 +236,29 @@ export function SectionReader({
               className="section-reader__prose"
               aria-label={`${section.title} content`}
             >
-              {section.content}
+              {clickableCitations ? (
+                <CitedSectionText
+                  content={section.content}
+                  onInspect={(id) => void inspectCitation(id)}
+                />
+              ) : (
+                section.content
+              )}
             </article>
           )}
         </div>
+
+        {citationOpen && (
+          <CitationInspector
+            chunk={citation}
+            missing={citationMissing}
+            onClose={() => {
+              setCitationOpen(false);
+              setCitation(null);
+              setCitationMissing(false);
+            }}
+          />
+        )}
 
         <aside
           className="section-reader__details"

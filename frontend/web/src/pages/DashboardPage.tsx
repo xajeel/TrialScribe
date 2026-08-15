@@ -241,6 +241,15 @@ export function DashboardPage({
               closeReader();
             }}
             onClose={closeReader}
+            inspectCitations={
+              reviewing || liveActive === null || workspace.selectedConversationId === null
+                ? undefined
+                : {
+                    fetcher: authorizedFetch,
+                    organizationId: liveActive.id,
+                    conversationId: workspace.selectedConversationId,
+                  }
+            }
           />
         </>
       )}

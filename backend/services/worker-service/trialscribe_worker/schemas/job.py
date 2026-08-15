@@ -39,3 +39,26 @@ class JobResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     cancel_requested_at: datetime | None
+
+
+class JobListResponse(BaseModel):
+    """Newest matching tickets for one conversation."""
+
+    items: list[JobResponse]
+
+
+class GenerationAttemptPublic(BaseModel):
+    """The latest per-section outcome a caller may see for one job.
+
+    `prompt` and `content` are never selected or returned (B4).
+    """
+
+    section_number: str
+    status: str
+    error_code: str | None
+    citation_ids: list[UUID]
+    attempt: int
+
+
+class GenerationAttemptListResponse(BaseModel):
+    items: list[GenerationAttemptPublic]
