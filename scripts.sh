@@ -15,6 +15,7 @@ Commands:
   test     Run every backend service test and the React test suite
   smoke    Start and health-check every platform boundary
   infra    Manage local infrastructure: up, check, down, or test
+  release  Manage the Compose release: up, down, ps, logs [service...], smoke, backup, restore, restart, load, or test
   db       Manage PostgreSQL schema: migrate, current, or test
   auth     Manage authentication: keys or test
   user     Manage organization RBAC: test
@@ -27,8 +28,7 @@ Commands:
 Compatibility aliases:
   sync     Install backend workspace dependencies
   api      Run the ai-engine service (same as: run ai)
-  ui       Run the interim Streamlit UI
-  up       Build and start the existing Docker Compose stack
+  up       Start the Compose release (same as: release up)
 EOF
 }
 
@@ -90,6 +90,13 @@ ensure_env() {
     GRAFANA_ADMIN_PASSWORD
     POSTGRES_EXPORTER_PORT
     REDIS_EXPORTER_PORT
+    RELEASE_WEB_PORT
+    RELEASE_BACKUP_DIR
+    GATEWAY_PORT
+    K6_VUS
+    K6_DURATION
+    K6_P95_MS
+    RELEASE_LOAD_FULL
     NCBI_API_KEY
     TAVILY_API_KEY
     GATEWAY_AUTH_SERVICE_URL
@@ -561,6 +568,79 @@ run_infrastructure() {
   esac
 }
 
+run_release() {
+  local action="${1:-}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+  local extra="${1:-}"
+  local -a release_compose=(
+    docker compose
+    --env-file .env
+    -p trialscribe-release
+    -f docker-compose.yml
+    -f infra/release/compose.yml
+    --profile infrastructure
+    --profile release
+  )
+  local -a release_check=(
+    python3 "$repo_root/scripts/check_release.py"
+    --project-name trialscribe-release
+    --compose-file docker-compose.yml
+    --compose-file infra/release/compose.yml
+  )
+
+  ensure_env
+  case "$action" in
+    up)
+      run_authentication keys
+      (
+        cd "$repo_root"
+        "${release_compose[@]}" up -d --wait --wait-timeout 600
+      )
+      ;;
+    down)
+      (cd "$repo_root" && "${release_compose[@]}" down)
+      ;;
+    ps)
+      (cd "$repo_root" && "${release_compose[@]}" ps)
+      ;;
+    logs)
+      (cd "$repo_root" && "${release_compose[@]}" logs -f --tail=100 "$@")
+      ;;
+    smoke|backup|restore|restart|jobs)
+      (cd "$repo_root" && "${release_check[@]}" --action "$action")
+      ;;
+    load)
+      if [[ "$extra" == "--full" ]]; then
+        export RELEASE_LOAD_FULL=1
+      fi
+      (cd "$repo_root" && "${release_check[@]}" --action load)
+      ;;
+    test)
+      if [[ "$extra" == "--full" ]]; then
+        export RELEASE_LOAD_FULL=1
+      fi
+      (
+        cd "$repo_root"
+        cleanup_release_test() {
+          "${release_compose[@]}" down --volumes --remove-orphans || true
+        }
+        trap cleanup_release_test EXIT
+        run_authentication keys
+        cleanup_release_test
+        "${release_compose[@]}" up -d --wait --wait-timeout 600
+        "${release_check[@]}" --action test
+      )
+      ;;
+    *)
+      echo "Unknown release action: ${action:-<missing>}" >&2
+      echo "Choose one of: up, down, ps, logs, smoke, backup, restore, restart, load, test" >&2
+      return 1
+      ;;
+  esac
+}
+
 run_service() {
   case "${1:-}" in
     gateway)
@@ -650,6 +730,9 @@ case "${1:-}" in
   infra)
     run_infrastructure "${2:-}"
     ;;
+  release)
+    run_release "${@:2}"
+    ;;
   db)
     run_database "${2:-}"
     ;;
@@ -677,11 +760,8 @@ case "${1:-}" in
   api)
     run_service ai
     ;;
-  ui)
-    (cd "$repo_root/frontend/streamlit-ui" && uv sync && uv run streamlit run app.py)
-    ;;
   up)
-    (cd "$repo_root" && docker compose up --build)
+    run_release up
     ;;
   help|-h|--help)
     usage

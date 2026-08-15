@@ -48,6 +48,16 @@ CONTENT_SECURITY_POLICY_HEADER = "Content-Security-Policy"
 CONTENT_SECURITY_POLICY_VALUE = (
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
 )
+DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"})
+DOCS_CONTENT_SECURITY_POLICY_VALUE = (
+    "default-src 'none'; "
+    "script-src https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "style-src https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "img-src data: https://fastapi.tiangolo.com; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'none'"
+)
 PERMISSIONS_POLICY_HEADER = "Permissions-Policy"
 PERMISSIONS_POLICY_VALUE = "camera=(), microphone=(), geolocation=()"
 

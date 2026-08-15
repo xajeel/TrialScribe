@@ -60,6 +60,12 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Check local infrastructure | `./scripts.sh infra check` |
 | Stop local infrastructure | `./scripts.sh infra down` |
 | Test isolated infrastructure | `./scripts.sh infra test` |
+| Start the Compose release | `./scripts.sh release up` |
+| Smoke-check the Compose release | `./scripts.sh release smoke` |
+| Backup / restore / restart release Postgres | `./scripts.sh release backup` / `restore` / `restart` |
+| Load-test the release (scaled; `--full` on reference hardware) | `./scripts.sh release load` |
+| Run the release acceptance suite | `./scripts.sh release test` |
+| Stop the Compose release | `./scripts.sh release down` |
 | Migrate PostgreSQL to current | `./scripts.sh db migrate` |
 | Check PostgreSQL revision | `./scripts.sh db current` |
 | Test isolated database lifecycle | `./scripts.sh db test` |
@@ -68,9 +74,9 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 | Test isolated organization RBAC lifecycle | `./scripts.sh user test` |
 | Show command help | `./scripts.sh help` |
 
-The existing `sync`, `api`, `ui`, and `up` commands remain compatibility aliases. `api` now
-uses the AI boundary's standard port 8003; `ui` continues to run the interim Streamlit app,
-and `up` continues to use the existing Docker Compose stack.
+The existing `sync`, `api`, and `up` commands remain compatibility aliases. `api` runs the
+AI boundary on port 8003; `up` starts the Compose release (same as `./scripts.sh release up`).
+See [docs/operations.md](docs/operations.md).
 
 ## Local infrastructure
 
@@ -142,6 +148,5 @@ against an isolated PostgreSQL project and deletes that project's containers and
 
 - `backend/` — uv workspace containing gateway, auth, user, AI, and worker packages.
 - `backend/packages/database/` — shared PostgreSQL runtime and ordered migrations.
-- `frontend/web/` — supported React application shell.
-- `frontend/streamlit-ui/` — interim standalone Streamlit UI.
+- `frontend/web/` — React application shell.
 - `infra/` — local Docker Compose initialization assets.

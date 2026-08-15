@@ -94,17 +94,3 @@ jobs:
       - name: Smoke tests
         working-directory: backend
         run: uv run --package trialscribe-ai pytest services/ai-engine/tests/
-
-  streamlit-ui:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "latest"
-
-      - name: Sync streamlit-ui (validates the path dependency on ai-engine)
-        working-directory: frontend/streamlit-ui
-        run: uv sync

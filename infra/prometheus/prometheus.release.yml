@@ -1,0 +1,45 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Release overlay targets Docker DNS names. Host-run scrape stays in prometheus.yml.
+scrape_configs:
+  - job_name: api-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  - job_name: auth-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["auth:8001"]
+
+  - job_name: user-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["user:8002"]
+
+  - job_name: ai-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ai:8003"]
+
+  - job_name: worker-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:8004"]
+
+  - job_name: worker-jobs
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["jobs:8006"]
+
+  - job_name: postgres
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["redis-exporter:9121"]

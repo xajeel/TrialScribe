@@ -22,6 +22,12 @@ videos/
 node_modules/
 frontend/web/dist/
 
+# Release backups
+/backups/
+
+# k6 load summaries
+/infra/k6/results/
+
 # Tooling caches
 .ruff_cache/
 .pytest_cache/
