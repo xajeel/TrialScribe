@@ -101,6 +101,11 @@ ensure_env() {
     GATEWAY_UPSTREAM_READ_TIMEOUT_SECONDS
     GATEWAY_UPSTREAM_WRITE_TIMEOUT_SECONDS
     GATEWAY_UPSTREAM_POOL_TIMEOUT_SECONDS
+    GATEWAY_RATE_LIMIT_REQUESTS
+    GATEWAY_RATE_LIMIT_AUTH_REQUESTS
+    GATEWAY_RATE_LIMIT_WINDOW_SECONDS
+    GATEWAY_RATE_LIMIT_HMAC_SECRET
+    UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN
     AUTH_JWT_PRIVATE_KEY_B64
     AUTH_JWT_PUBLIC_KEY_B64
     AUTH_JWT_ISSUER
@@ -560,22 +565,22 @@ run_service() {
   case "${1:-}" in
     gateway)
       ensure_env
-      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-gateway uvicorn trialscribe_gateway.api.app:app --host 0.0.0.0 --port "${GATEWAY_PORT:-8000}")
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-gateway uvicorn trialscribe_gateway.api.app:app --host 0.0.0.0 --port "${GATEWAY_PORT:-8000}" --timeout-graceful-shutdown "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}")
       ;;
     auth)
       ensure_env
-      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-auth uvicorn trialscribe_auth.api.app:app --host 0.0.0.0 --port "${AUTH_PORT:-8001}")
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-auth uvicorn trialscribe_auth.api.app:app --host 0.0.0.0 --port "${AUTH_PORT:-8001}" --timeout-graceful-shutdown "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}")
       ;;
     user)
       ensure_env
-      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port "${USER_PORT:-8002}")
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-user uvicorn trialscribe_user.api.app:app --host 0.0.0.0 --port "${USER_PORT:-8002}" --timeout-graceful-shutdown "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}")
       ;;
     ai)
-      (cd "$repo_root/backend" && uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --host 0.0.0.0 --port "${AI_PORT:-8003}")
+      (cd "$repo_root/backend" && uv run --package trialscribe-ai uvicorn trialscribe_ai.api.app:app --host 0.0.0.0 --port "${AI_PORT:-8003}" --timeout-graceful-shutdown "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}")
       ;;
     worker)
       ensure_env
-      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-worker uvicorn trialscribe_worker.api.app:app --host 0.0.0.0 --port "${WORKER_PORT:-8004}")
+      (cd "$repo_root/backend" && uv run --env-file "$repo_root/.env" --package trialscribe-worker uvicorn trialscribe_worker.api.app:app --host 0.0.0.0 --port "${WORKER_PORT:-8004}" --timeout-graceful-shutdown "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}")
       ;;
     jobs)
       ensure_env

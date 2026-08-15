@@ -500,6 +500,24 @@ def test_a_cleanup_failure_runs_the_pipeline_exactly_once() -> None:
     assert job.status == JobStatus.SUCCEEDED.value
 
 
+def test_a_second_delivery_does_not_rerun_a_finished_job() -> None:
+    store = FakeJobStore()
+    attempts: list[int] = []
+
+    async def counting_pipeline(context: JobContext) -> None:
+        attempts.append(context.attempt)
+        await context.report(100)
+
+    job = store.seed()
+    runner, _ = build_runner(store, {JobKind.PROBE: counting_pipeline})
+
+    run(runner, job, store)
+    run(runner, job, store)
+
+    assert attempts == [1]
+    assert job.status == JobStatus.SUCCEEDED.value
+
+
 def test_an_unsupported_kind_survives_a_cleanup_failure_too() -> None:
     store = FakeJobStore()
     job = store.seed(kind="section-generation")

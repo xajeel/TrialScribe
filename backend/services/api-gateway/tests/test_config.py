@@ -80,6 +80,10 @@ def test_uv_env_file_cors_representation_is_accepted(
         ("gateway_upstream_read_timeout_seconds", -1),
         ("gateway_upstream_write_timeout_seconds", 0),
         ("gateway_upstream_pool_timeout_seconds", -1),
+        ("gateway_rate_limit_requests", 0),
+        ("gateway_rate_limit_auth_requests", -1),
+        ("gateway_rate_limit_window_seconds", 0),
+        ("gateway_rate_limit_hmac_secret", "short"),
     ],
 )
 def test_invalid_public_contract_values_are_rejected(

@@ -15,3 +15,10 @@ class UpstreamUnavailableError(GatewayServiceError, ConnectionError):
 
 class UpstreamTimeoutError(GatewayServiceError, TimeoutError):
     """A configured upstream service exceeded a gateway timeout."""
+
+
+class RateLimitedError(Exception):
+    """The caller exceeded the gateway request quota for this window."""
+
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after

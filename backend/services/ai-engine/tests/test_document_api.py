@@ -15,7 +15,10 @@ from trialscribe_ai.api.dependencies import (
     get_database_runtime,
     get_now,
 )
+from trialscribe_ai.models.conversation import Conversation
 from trialscribe_ai.models.document import Document
+from trialscribe_ai.services.documents import DocumentService
+from trialscribe_ai.utils.constant import UNSUPPORTED_DOCUMENT_TYPE_DETAIL
 from trialscribe_ai.utils.exceptions import (
     DocumentNotFoundError,
     DocumentTooLargeError,
@@ -252,3 +255,64 @@ def test_trusted_headers_are_required_for_documents() -> None:
     assert malformed_account.status_code == 422
     assert malformed_account.json() == {"detail": "Invalid account context"}
     assert "secret-not-a-uuid" not in malformed_account.text
+
+
+def test_rejected_upload_body_is_not_in_the_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = b"POLY-SECRET-BYTES"
+    conversation = Conversation(
+        id=CONVERSATION_ID,
+        organization_id=ORGANIZATION_ID,
+        owner_account_id=ACCOUNT_ID,
+        title="Protocol",
+        last_activity_at=NOW,
+        archived_at=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    class Conversations:
+        async def get_accessible(self, *_args: object, **_kwargs: object) -> Conversation:
+            return conversation
+
+        async def flush(self, item: Conversation) -> Conversation:
+            return item
+
+    class Documents:
+        async def add(self, document: Document) -> Document:
+            return document
+
+    class Events:
+        async def record_uploaded(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        routes,
+        "DocumentService",
+        lambda *_args: DocumentService(
+            Conversations(), Documents(), Events()
+        ),  # type: ignore[arg-type]
+    )
+    app.dependency_overrides[get_current_account_id] = lambda: ACCOUNT_ID
+    app.dependency_overrides[get_current_organization_id] = lambda: ORGANIZATION_ID
+    app.dependency_overrides[get_database_runtime] = lambda: FakeDatabaseRuntime()
+    app.dependency_overrides[get_now] = lambda: NOW
+    try:
+        response = TestClient(app).post(
+            f"/conversations/{CONVERSATION_ID}/documents",
+            data={"kind": "research_document"},
+            files={
+                "file": (
+                    "polyglot.pdf",
+                    b"%PDF-1.7\n<html>" + marker,
+                    "application/pdf",
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 415
+    assert response.json() == {"detail": UNSUPPORTED_DOCUMENT_TYPE_DETAIL}
+    assert marker.decode() not in response.text

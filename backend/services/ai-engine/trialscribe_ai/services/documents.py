@@ -13,6 +13,8 @@ from trialscribe_ai.utils.constant import (
     ALLOWED_DOCUMENT_CONTENT_TYPES,
     FILENAME_MAX_LENGTH,
     MAX_PAGE_LIMIT,
+    PDF_FORBIDDEN_HEADER_MARKERS,
+    PDF_HEADER_SCAN_BYTES,
     PDF_MAGIC,
     TRIAL_DATA_CONTENT_TYPE,
 )
@@ -184,6 +186,9 @@ class DocumentService:
             raise UnsupportedDocumentTypeError
         if declared_content_type == _PDF_CONTENT_TYPE:
             if not content.startswith(PDF_MAGIC):
+                raise UnsupportedDocumentTypeError
+            header = content[:PDF_HEADER_SCAN_BYTES].lower()
+            if any(marker in header for marker in PDF_FORBIDDEN_HEADER_MARKERS):
                 raise UnsupportedDocumentTypeError
         else:
             try:

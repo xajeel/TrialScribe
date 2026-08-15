@@ -36,6 +36,31 @@ ORGANIZATION_ACCESS_DENIED_DETAIL = "Organization access denied"
 SERVICE_UNAVAILABLE_DETAIL = "Service unavailable"
 UPSTREAM_TIMEOUT_DETAIL = "Service request timed out"
 
+CONTENT_TYPE_OPTIONS_HEADER = "X-Content-Type-Options"
+CONTENT_TYPE_OPTIONS_VALUE = "nosniff"
+FRAME_OPTIONS_HEADER = "X-Frame-Options"
+FRAME_OPTIONS_VALUE = "DENY"
+REFERRER_POLICY_HEADER = "Referrer-Policy"
+REFERRER_POLICY_VALUE = "no-referrer"
+CACHE_CONTROL_HEADER = "Cache-Control"
+CACHE_CONTROL_VALUE = "no-store"
+CONTENT_SECURITY_POLICY_HEADER = "Content-Security-Policy"
+CONTENT_SECURITY_POLICY_VALUE = (
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+)
+PERMISSIONS_POLICY_HEADER = "Permissions-Policy"
+PERMISSIONS_POLICY_VALUE = "camera=(), microphone=(), geolocation=()"
+
+TOO_MANY_REQUESTS_DETAIL = "Too many requests"
+RETRY_AFTER_HEADER = "Retry-After"
+RATE_LIMIT_FAMILY_AUTH = "auth"
+RATE_LIMIT_FAMILY_API = "api"
+RATE_LIMIT_EXEMPT_PATHS = frozenset(
+    {"/health/live", "/health/ready", "/metrics"}
+)
+RATE_LIMIT_MAX_KEYS = 10_000
+RATE_LIMIT_HMAC_MIN_LENGTH = 16
+
 HOP_BY_HOP_HEADERS = frozenset(
     {
         "connection",
