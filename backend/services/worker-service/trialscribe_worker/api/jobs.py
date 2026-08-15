@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_db.runtime import DatabaseRuntime
@@ -28,8 +28,11 @@ from trialscribe_worker.repositories.generation_outcomes import GenerationOutcom
 from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import ProviderCallRepository
+from trialscribe_worker.repositories.protocol_exports import ProtocolExportRepository
 from trialscribe_worker.repositories.protocol_readiness import ProtocolReadinessRepository
 from trialscribe_worker.schemas.job import (
+    ExportItemPublic,
+    ExportListResponse,
     GenerationAttemptListResponse,
     GenerationAttemptPublic,
     JobCreateRequest,
@@ -46,8 +49,11 @@ from trialscribe_worker.schemas.job import (
 )
 from trialscribe_worker.services.jobs import JobService
 from trialscribe_worker.services.usage import build_usage_view
+from trialscribe_worker.utils.http import attachment_content_disposition
 from trialscribe_worker.utils.constant import (
     CONVERSATION_NOT_FOUND_DETAIL,
+    DOCX_MEDIA_TYPE,
+    EXPORT_NOT_FOUND_DETAIL,
     JOB_LIST_DEFAULT_LIMIT,
     JOB_LIST_MAX_LIMIT,
     JOB_LIST_MIN_LIMIT,
@@ -320,6 +326,70 @@ async def read_usage(
             summary=totals,
         )
     return UsageResponse.model_validate(view)
+
+
+@router.get("/exports", response_model=ExportListResponse)
+async def list_exports(
+    organization_id: OrganizationId,
+    account_id: AccountId,
+    runtime: Runtime,
+    conversation_id: Annotated[UUID, Query()],
+) -> ExportListResponse:
+    async with runtime.transaction() as session:
+        conversation = await ProtocolReadinessRepository(session).get_conversation(
+            organization_id,
+            conversation_id,
+        )
+        if conversation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=CONVERSATION_NOT_FOUND_DETAIL,
+            )
+        rows = await ProtocolExportRepository(session).list_metadata(
+            organization_id,
+            conversation_id,
+        )
+    return ExportListResponse(
+        items=[
+            ExportItemPublic(
+                id=row.id,
+                job_id=row.job_id,
+                filename=row.filename,
+                byte_size=row.byte_size,
+                section_count=row.section_count,
+                scope=row.scope,
+                created_at=row.created_at,
+                requester=(
+                    "You" if row.account_id == account_id else "Unavailable account"
+                ),
+            )
+            for row in rows
+        ]
+    )
+
+
+@router.get("/exports/{export_id}/file")
+async def download_export(
+    export_id: UUID,
+    organization_id: OrganizationId,
+    runtime: Runtime,
+) -> Response:
+    async with runtime.transaction() as session:
+        stored = await ProtocolExportRepository(session).get_file(
+            organization_id,
+            export_id,
+        )
+    if stored is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=EXPORT_NOT_FOUND_DETAIL,
+        )
+    filename, content = stored
+    return Response(
+        content=content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": attachment_content_disposition(filename)},
+    )
 
 
 @router.get("/{job_id}", response_model=JobResponse)

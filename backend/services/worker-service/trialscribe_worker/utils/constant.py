@@ -8,7 +8,24 @@ READINESS_STATUS = "ready"
 
 GENERATE_SECTIONS_KIND = "generate_sections"
 VALIDATE_READINESS_KIND = "validate_readiness"
+EXPORT_PROTOCOL_KIND = "export_protocol"
+EXPORT_SCOPE_PARAMETER = "scope"
 READINESS_SCOPE_INDEX = "ix_protocol_readiness_checks_scope"
+EXPORT_SCOPE_DONE_ONLY = "done-only"
+EXPORT_SCOPE_INCLUDE_DRAFTS = "include-drafts"
+EXPORT_SCOPE_SQL_VALUES = f"'{EXPORT_SCOPE_DONE_ONLY}', '{EXPORT_SCOPE_INCLUDE_DRAFTS}'"
+EXPORT_SCOPE_CHECK = f"scope IN ({EXPORT_SCOPE_SQL_VALUES})"
+EXPORT_BYTE_SIZE_CHECK = "byte_size > 0"
+EXPORT_SECTION_COUNT_CHECK = "section_count >= 1"
+EXPORT_FILENAME_CHECK = (
+    "char_length(btrim(filename)) >= 1 AND char_length(filename) <= 255"
+)
+EXPORT_SCOPE_INDEX = "ix_protocol_exports_scope"
+EXPORT_NOT_FOUND_DETAIL = "export not found"
+MAX_EXPORT_FILENAME_LENGTH = 255
+DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 JOB_LIST_MIN_LIMIT = 1
 JOB_LIST_MAX_LIMIT = 20
 JOB_LIST_DEFAULT_LIMIT = 1

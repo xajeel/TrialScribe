@@ -3,14 +3,18 @@ import { describe, expect, it } from "vitest";
 import type { RequestOptions } from "./client";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import {
+  EXPORT_PROTOCOL_JOB_KIND,
   GENERATE_JOB_POLL_MS,
   GENERATE_SECTIONS_JOB_KIND,
   VALIDATE_READINESS_JOB_KIND,
   cancelJob,
   createJob,
+  downloadExport,
+  exportFileFromApi,
   getJob,
   getReadiness,
   getUsage,
+  listExports,
   listJobAttempts,
   listJobs,
   listRewriteOptions,
@@ -39,6 +43,7 @@ describe("jobs api", () => {
   it("exports the generate-sections kind and one-second poll interval", () => {
     expect(GENERATE_SECTIONS_JOB_KIND).toBe("generate_sections");
     expect(VALIDATE_READINESS_JOB_KIND).toBe("validate_readiness");
+    expect(EXPORT_PROTOCOL_JOB_KIND).toBe("export_protocol");
     expect(GENERATE_JOB_POLL_MS).toBe(1000);
   });
 
@@ -119,5 +124,44 @@ describe("jobs api", () => {
 
     expect(calls[0]?.path).toContain("/v1/jobs/readiness?");
     expect(calls[0]?.path).toContain(`conversation_id=${CONVERSATION_ID}`);
+  });
+
+  it("lists exports with conversation_id", async () => {
+    const { fetcher, calls } = capturingFetcher();
+
+    await listExports(fetcher, ORGANIZATION_ID, CONVERSATION_ID);
+
+    expect(calls[0]?.path).toContain("/v1/jobs/exports?");
+    expect(calls[0]?.path).toContain(`conversation_id=${CONVERSATION_ID}`);
+  });
+
+  it("downloads an export file as a blob", async () => {
+    const { fetcher, calls } = capturingFetcher();
+    const exportId = "00000000-0000-4000-8000-000000000040";
+
+    await downloadExport(fetcher, ORGANIZATION_ID, exportId);
+
+    expect(calls[0]?.path).toBe(`/v1/jobs/exports/${exportId}/file`);
+    expect(calls[0]?.options?.responseType).toBe("blob");
+  });
+
+  it("maps an export record onto the file card view", () => {
+    const view = exportFileFromApi(
+      {
+        id: "export-1",
+        job_id: JOB_ID,
+        filename: "AURORA-301_protocol_2026-08-15.docx",
+        byte_size: 2048,
+        section_count: 8,
+        scope: "done-only",
+        created_at: "2026-08-15T12:00:00Z",
+        requester: "You",
+      },
+      "You",
+    );
+    expect(view.exportId).toBe("export-1");
+    expect(view.byteSize).toBe(2048);
+    expect(view.sections).toBe(8);
+    expect(view.requester).toBe("You");
   });
 });

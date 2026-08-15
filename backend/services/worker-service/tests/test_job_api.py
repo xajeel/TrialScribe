@@ -1,7 +1,9 @@
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,6 +31,7 @@ from trialscribe_worker.repositories.job_progress import JobProgressStore
 from trialscribe_worker.repositories.jobs import JobRepository
 from trialscribe_worker.repositories.provider_calls import ProviderCallListRecord
 from trialscribe_worker.utils.constant import (
+    EXPORT_PROTOCOL_KIND,
     GENERATE_SECTIONS_KIND,
     PRICING_VERSION_DEFAULT,
     VALIDATE_READINESS_KIND,
@@ -278,6 +281,33 @@ class FakeProtocolReadinessRepository:
         return type(self).latest
 
 
+class FakeProtocolExportRepository:
+    """Stand in for stored export metadata and file bytes."""
+
+    rows: list[Any] = []
+    files: dict[tuple[UUID, UUID], tuple[str, bytes]] = {}
+
+    def __init__(self, _session: Any) -> None:
+        pass
+
+    async def list_metadata(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[Any]:
+        del conversation_id
+        if organization_id != ORGANIZATION_ID:
+            return []
+        return list(type(self).rows)
+
+    async def get_file(
+        self,
+        organization_id: UUID,
+        export_id: UUID,
+    ) -> tuple[str, bytes] | None:
+        return type(self).files.get((organization_id, export_id))
+
+
 class FakeOutbox:
     """Record what the request stored beside its ticket."""
 
@@ -323,6 +353,8 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     FakeProviderCallRepository.writes = 0
     FakeProtocolReadinessRepository.conversation = ("AURORA-301", NOW)
     FakeProtocolReadinessRepository.latest = None
+    FakeProtocolExportRepository.rows = []
+    FakeProtocolExportRepository.files = {}
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.JobRepository",
         FakeJobRepository,
@@ -338,6 +370,10 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.ProtocolReadinessRepository",
         FakeProtocolReadinessRepository,
+    )
+    monkeypatch.setattr(
+        "trialscribe_worker.api.jobs.ProtocolExportRepository",
+        FakeProtocolExportRepository,
     )
     monkeypatch.setattr(
         "trialscribe_worker.api.jobs.OutboxRepository",
@@ -473,8 +509,24 @@ def test_generate_sections_is_an_accepted_job_kind(api: dict[str, Any]) -> None:
 
     assert JobKind.GENERATE_SECTIONS.value == GENERATE_SECTIONS_KIND
     assert JobKind.VALIDATE_READINESS.value == VALIDATE_READINESS_KIND
+    assert JobKind.EXPORT_PROTOCOL.value == EXPORT_PROTOCOL_KIND
     assert response.status_code == 202
     assert response.json()["kind"] == GENERATE_SECTIONS_KIND
+
+
+def test_export_protocol_is_an_accepted_job_kind(api: dict[str, Any]) -> None:
+    response = api["client"].post(
+        "/jobs",
+        json={
+            "kind": EXPORT_PROTOCOL_KIND,
+            "conversation_id": str(CONVERSATION_ID),
+            "parameters": {"scope": "done-only"},
+        },
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["kind"] == EXPORT_PROTOCOL_KIND
 
 
 def test_an_unreachable_broker_no_longer_costs_the_caller_their_job(
@@ -941,3 +993,104 @@ def test_readiness_marks_a_newer_protocol_stale_and_not_ready(
     assert body["issues"][0]["title"] == "Protocol changed since last check"
     assert body["issues"][0]["action"] == "retry-check"
     assert body["issues"][0]["action_label"] == "Check again"
+
+
+def test_unknown_conversation_exports_are_not_found(api: dict[str, Any]) -> None:
+    response = api["client"].get(
+        "/jobs/exports",
+        params={"conversation_id": str(uuid4())},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "conversation not found"}
+
+
+def test_other_organization_cannot_list_or_download_exports(
+    api: dict[str, Any],
+) -> None:
+    export_id = uuid4()
+    FakeProtocolExportRepository.rows = [
+        SimpleNamespace(
+            id=export_id,
+            job_id=uuid4(),
+            account_id=ACCOUNT_ID,
+            filename="secret.docx",
+            byte_size=12,
+            section_count=1,
+            scope="done-only",
+            created_at=NOW,
+        )
+    ]
+    FakeProtocolExportRepository.files[(ORGANIZATION_ID, export_id)] = (
+        "secret.docx",
+        b"PK secret",
+    )
+    foreign = {
+        "X-TrialScribe-Account-ID": str(ACCOUNT_ID),
+        "X-TrialScribe-Organization-ID": str(OTHER_ORGANIZATION_ID),
+    }
+
+    listed = api["client"].get(
+        "/jobs/exports",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=foreign,
+    )
+    downloaded = api["client"].get(f"/jobs/exports/{export_id}/file", headers=foreign)
+
+    assert listed.status_code == 404
+    assert listed.json() == {"detail": "conversation not found"}
+    assert downloaded.status_code == 404
+    assert downloaded.json() == {"detail": "export not found"}
+
+
+def test_export_list_omits_bytes_and_job_parameters(api: dict[str, Any]) -> None:
+    export_id = uuid4()
+    job_id = uuid4()
+    FakeProtocolExportRepository.rows = [
+        SimpleNamespace(
+            id=export_id,
+            job_id=job_id,
+            account_id=ACCOUNT_ID,
+            filename="AURORA-301_protocol_2026-08-15.docx",
+            byte_size=2048,
+            section_count=8,
+            scope="done-only",
+            created_at=NOW,
+        )
+    ]
+
+    response = api["client"].get(
+        "/jobs/exports",
+        params={"conversation_id": str(CONVERSATION_ID)},
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert _json_keys(body).isdisjoint({"content", "parameters", "prompt"})
+    assert body["items"][0]["id"] == str(export_id)
+    assert body["items"][0]["job_id"] == str(job_id)
+    assert body["items"][0]["requester"] == "You"
+    missing = api["client"].get(f"/jobs/{uuid4()}", headers=HEADERS)
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "job not found"}
+
+
+def test_export_download_encodes_unicode_filename(api: dict[str, Any]) -> None:
+    export_id = uuid4()
+    filename = "研究📄.docx"
+    FakeProtocolExportRepository.files[(ORGANIZATION_ID, export_id)] = (
+        filename,
+        b"PK\x03\x04docx",
+    )
+
+    response = api["client"].get(f"/jobs/exports/{export_id}/file", headers=HEADERS)
+
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert f"filename*=UTF-8''{quote(filename, safe='')}" in disposition
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    assert response.content == b"PK\x03\x04docx"
+

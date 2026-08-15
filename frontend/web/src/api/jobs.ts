@@ -1,6 +1,8 @@
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import { organizationHeaders } from "./client";
 import type {
+  ExportList,
+  ExportRecord,
   GenerationAttemptList,
   JobList,
   JobRecord,
@@ -8,9 +10,11 @@ import type {
   RewriteOptionList,
   UsageRecord,
 } from "./types";
+import type { ExportFileView } from "../product/deliveryAuditReviewFixtures";
 
 export const GENERATE_SECTIONS_JOB_KIND = "generate_sections";
 export const VALIDATE_READINESS_JOB_KIND = "validate_readiness";
+export const EXPORT_PROTOCOL_JOB_KIND = "export_protocol";
 export const GENERATE_JOB_POLL_MS = 1000;
 
 const JOBS_PATH = "/v1/jobs";
@@ -123,4 +127,47 @@ export function getReadiness(
   return fetcher<ReadinessRecord>(`${JOBS_PATH}/readiness?${query.toString()}`, {
     headers: organizationHeaders(organizationId),
   });
+}
+
+/** List stored Word exports for one protocol workspace. */
+export function listExports(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  conversationId: string,
+): Promise<ExportList> {
+  const query = new URLSearchParams({ conversation_id: conversationId });
+  return fetcher<ExportList>(`${JOBS_PATH}/exports?${query.toString()}`, {
+    headers: organizationHeaders(organizationId),
+  });
+}
+
+/** Download one stored Word export as a blob. */
+export function downloadExport(
+  fetcher: AuthorizedFetch,
+  organizationId: string,
+  exportId: string,
+): Promise<Blob> {
+  return fetcher<Blob>(
+    `${JOBS_PATH}/exports/${encodeURIComponent(exportId)}/file`,
+    {
+      headers: organizationHeaders(organizationId),
+      responseType: "blob",
+    },
+  );
+}
+
+/** Map one API export row onto the sheet's file card. */
+export function exportFileFromApi(
+  record: ExportRecord,
+  viewerLabel: string,
+): ExportFileView {
+  return {
+    exportId: record.id,
+    filename: record.filename,
+    byteSize: record.byte_size,
+    sections: record.section_count,
+    createdAt: record.created_at,
+    requester: record.requester || viewerLabel,
+    scope: record.scope,
+  };
 }

@@ -49,6 +49,7 @@ export interface RequestOptions {
   headers?: HeadersInit;
   auth?: boolean;
   csrf?: boolean;
+  responseType?: "json" | "blob";
 }
 
 /** Build the public organization-selection header required by AI routes. */
@@ -99,6 +100,9 @@ export async function apiFetch<T>(
   }
   if (response.status === 204) {
     return undefined as T;
+  }
+  if (opts.responseType === "blob") {
+    return (await response.blob()) as T;
   }
   return (await response.json()) as T;
 }

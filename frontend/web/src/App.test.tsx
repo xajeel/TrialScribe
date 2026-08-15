@@ -244,6 +244,27 @@ describe("App", () => {
           generations: [],
         });
       }
+      if (url.includes("/v1/jobs/exports")) {
+        return jsonResponse(200, { items: [] });
+      }
+      if (url.endsWith("/v1/jobs")) {
+        return jsonResponse(202, {
+          id: "00000000-0000-4000-8000-000000000070",
+          organization_id: conversation.organization_id,
+          conversation_id: conversation.id,
+          kind: "export_protocol",
+          status: "queued",
+          progress: 0,
+          attempt: 0,
+          error_code: null,
+          correlation_id: "00000000-0000-4000-8000-000000000071",
+          created_at: "2026-08-15T09:00:00Z",
+          updated_at: "2026-08-15T09:00:00Z",
+          started_at: null,
+          finished_at: null,
+          cancel_requested_at: null,
+        });
+      }
       return jsonResponse(404, { detail: "Not found" });
     });
 
