@@ -431,6 +431,7 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
     settings = WorkerSettings()
     retrieved: list[object] = []
     trial_passages: list[str] = []
+    await context.check_cancelled()
     turns = await recent(
         context.organization_id,
         conversation_id,
@@ -443,6 +444,7 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
         if record.instructions.strip():
             query = f"{record.title}\n{record.instructions}"
         retriever = ConversationRetriever(context.gateway, context.evidence, settings)
+        await context.check_cancelled()
         try:
             retrieved = list(
                 await retriever.retrieve(
@@ -487,6 +489,7 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
         )
         prompt = "\n\n".join(message.content for message in messages)
         prompts.append(prompt)
+        await context.check_cancelled()
         try:
             completed = await context.gateway.complete(
                 ChatRequest(
@@ -557,6 +560,7 @@ async def generate_sections_pipeline(context: JobContext) -> None:
     if _job_mode(context.parameters) == GENERATE_MODE_REWRITE:
         request = parse_rewrite_request(context.parameters)
         await context.report(10)
+        await context.check_cancelled()
         outcome = await rewrite_one_section(context, request)
         if outcome == GenerationAttemptStatus.FAILED.value:
             raise GenerateSectionError
@@ -607,6 +611,7 @@ async def run_generate_sections_job(
     if _job_mode(context.parameters) == GENERATE_MODE_REWRITE:
         request = parse_rewrite_request(context.parameters)
         await context.report(10)
+        await context.check_cancelled()
         async with runtime.transaction() as session:
             bind_generate_stores(context, session, chroma_index)
             outcome = await rewrite_one_section(context, request)

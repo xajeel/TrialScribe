@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -102,6 +102,41 @@ describe("AuthoringPane rewrite control", () => {
       "title",
       "Save changes before rewriting",
     );
+  });
+
+  it("does not reuse a text selection after the section changes", async () => {
+    const user = userEvent.setup();
+    const onRewrite = vi.fn();
+    const other: M11Section = {
+      ...SECTION,
+      id: "section-2",
+      section_number: "2",
+      title: "Trial population",
+      content: "Stored section text also long enough",
+    };
+    const { rerender } = render(
+      <AuthoringPane workspace={workspace()} onRewrite={onRewrite} />,
+    );
+    const textarea = screen.getByLabelText("Section content");
+    await user.click(textarea);
+    textarea.setSelectionRange(0, 7);
+    fireEvent.select(textarea);
+    await user.click(screen.getByRole("button", { name: "Rewrite section" }));
+    expect(onRewrite).toHaveBeenCalledWith({ start: 0, end: 7 });
+
+    onRewrite.mockClear();
+    rerender(
+      <AuthoringPane
+        workspace={workspace({
+          selectedSection: other,
+          selectedSectionNumber: other.section_number,
+          sections: [SECTION, other],
+        })}
+        onRewrite={onRewrite}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Rewrite section" }));
+    expect(onRewrite).toHaveBeenCalledWith(null);
   });
 
   it("hides rewrite until a done section is reopened", () => {

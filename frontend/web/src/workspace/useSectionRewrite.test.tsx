@@ -235,4 +235,62 @@ describe("useSectionRewrite", () => {
       });
     });
   });
+
+  it("drops stale rewrite options after the section revision changes", async () => {
+    const { fetcher, calls } = capturingFetcher((path, options) => {
+      if (path === "/v1/jobs" && options?.method === "POST") {
+        return jobRecord();
+      }
+      if (path === `/v1/jobs/${JOB_ID}`) {
+        return jobRecord();
+      }
+      if (path === `/v1/jobs/${JOB_ID}/rewrite-options`) {
+        return {
+          items: [
+            { id: "alternative-1", text: "Rewritten option one." },
+            { id: "alternative-2", text: "Rewritten option two." },
+          ],
+        };
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    let latest: SectionRewriteController | null = null;
+    const view = render(
+      <Harness
+        fetcher={fetcher}
+        section={sectionRecord()}
+        capture={(controller) => {
+          latest = controller;
+        }}
+      />,
+    );
+
+    await act(async () => {
+      screen.getByRole("button", { name: "start" }).click();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("options")).toHaveTextContent("2");
+    });
+
+    view.rerender(
+      <Harness
+        fetcher={fetcher}
+        section={sectionRecord({
+          current_revision: 3,
+          content: "Newer saved draft.",
+        })}
+        capture={(controller) => {
+          latest = controller;
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("options")).toHaveTextContent("0");
+    });
+
+    await act(async () => {
+      await latest?.useOption("alternative-1");
+    });
+    expect(calls.some((call) => call.options?.method === "PATCH")).toBe(false);
+  });
 });

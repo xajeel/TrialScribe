@@ -53,6 +53,7 @@ export function AuthoringPane({
   useEffect(() => {
     setSectionInstructions(section?.instructions ?? "");
     setSectionContent(section?.content ?? "");
+    setSelection({ start: 0, end: 0 });
   }, [
     section?.current_revision,
     section?.id,

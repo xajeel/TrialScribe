@@ -27,6 +27,7 @@ from trialscribe_worker.utils.constant import (
 from trialscribe_worker.utils.exceptions import (
     GenerateSectionError,
     InvalidJobInputError,
+    JobCancelledError,
 )
 
 _HELPERS = importlib.util.spec_from_file_location(
@@ -209,3 +210,58 @@ def test_invalid_selection_fails_without_saving() -> None:
         asyncio.run(generate_sections_pipeline(context))
     assert sections.rows["5"].content == ORIGINAL
     assert attempts.rows[-1]["error_code"] == "invalid_selection"
+
+
+def test_rewrite_stops_when_cancelled_before_provider() -> None:
+    chat = CitingChat()
+    evidence = _evidence()
+    asyncio.run(_seed_trial(evidence, MARKER))
+    sections = MemorySections(
+        {"5": _section("5", "TRIAL POPULATION", content=ORIGINAL)}
+    )
+    attempts = MemoryAttempts()
+    context = _context(
+        evidence=evidence,
+        gateway=_gateway(chat),
+        sections=sections,
+        attempts=attempts,
+    )
+    context.parameters = _rewrite_parameters()
+
+    async def check_cancelled() -> None:
+        raise JobCancelledError
+
+    context.check_cancelled = check_cancelled
+    with pytest.raises(JobCancelledError):
+        asyncio.run(generate_sections_pipeline(context))
+    assert chat.section_calls == []
+    assert attempts.rows == []
+    assert sections.rows["5"].content == ORIGINAL
+
+
+def test_rewrite_stops_between_alternative_completions() -> None:
+    chat = CitingChat()
+    evidence = _evidence()
+    asyncio.run(_seed_trial(evidence, MARKER))
+    sections = MemorySections(
+        {"5": _section("5", "TRIAL POPULATION", content=ORIGINAL)}
+    )
+    attempts = MemoryAttempts()
+    context = _context(
+        evidence=evidence,
+        gateway=_gateway(chat),
+        sections=sections,
+        attempts=attempts,
+    )
+    context.parameters = _rewrite_parameters()
+
+    async def check_cancelled() -> None:
+        if chat.section_calls:
+            raise JobCancelledError
+
+    context.check_cancelled = check_cancelled
+    with pytest.raises(JobCancelledError):
+        asyncio.run(generate_sections_pipeline(context))
+    assert chat.section_calls == ["5"]
+    assert attempts.rows == []
+    assert sections.rows["5"].content == ORIGINAL

@@ -90,6 +90,7 @@ export function useSectionRewrite({
   jobRef.current = job;
   const intervalRef = useRef<number | null>(null);
   const generationRef = useRef(0);
+  const sourceRevisionRef = useRef<number | null>(null);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -102,6 +103,7 @@ export function useSectionRewrite({
     stopPolling();
     generationRef.current += 1;
     jobRef.current = null;
+    sourceRevisionRef.current = null;
     setJob(null);
     setOptions([]);
     setError(null);
@@ -116,7 +118,15 @@ export function useSectionRewrite({
 
   useEffect(() => {
     reset();
-  }, [conversationId, enabled, organizationId, reset, section?.id]);
+  }, [
+    conversationId,
+    enabled,
+    organizationId,
+    reset,
+    section?.content,
+    section?.current_revision,
+    section?.id,
+  ]);
 
   const start = useCallback(
     async (input: RewriteStartInput) => {
@@ -135,6 +145,7 @@ export function useSectionRewrite({
       stopPolling();
       const expected = generationRef.current + 1;
       generationRef.current = expected;
+      sourceRevisionRef.current = current.current_revision;
       setPending(true);
       setError(null);
       setOptions([]);
@@ -217,7 +228,12 @@ export function useSectionRewrite({
       const option =
         options.find((item) => item.id === id) ??
         (id === "alternative-2" ? options[1] : options[0]);
-      if (option === undefined) {
+      const expectedRevision = sourceRevisionRef.current;
+      if (option === undefined || expectedRevision === null) {
+        return false;
+      }
+      if (current.current_revision !== expectedRevision) {
+        reset();
         return false;
       }
       setPending(true);
@@ -228,7 +244,7 @@ export function useSectionRewrite({
           organizationId,
           conversationId,
           current.section_number,
-          current.current_revision,
+          expectedRevision,
           current.instructions,
           option.text,
         );
