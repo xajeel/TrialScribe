@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
 from pydantic import BaseModel
 
 from trialscribe_events.config import EventBusSettings
@@ -20,6 +21,20 @@ CORRELATION_ID = UUID("00000000-0000-4000-8000-000000000003")
 OCCURRED_AT = datetime(2026, 8, 8, 12, 30, 0, tzinfo=UTC)
 TOPIC = "trialscribe.job.v1"
 CLAIMED = UUID("00000000-0000-4000-8000-000000000004")
+
+
+def _consumed(event_type: str, result: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "trialscribe_events_consumed_total",
+            {"event_type": event_type, "result": result},
+        )
+        or 0.0
+    )
+
+
+def _metrics_text() -> str:
+    return generate_latest().decode()
 
 
 class JobRequested(BaseModel):
@@ -180,6 +195,7 @@ def test_a_registered_event_runs_its_handler_once_and_commits() -> None:
 
     consumer.register_handler("job.generation.requested", 1, handler)
     kafka = FakeKafkaConsumer([FakeRecord(envelope().to_bytes())])
+    before = _consumed("job.generation.requested", "handled")
 
     asyncio.run(_run(consumer, kafka))
 
@@ -188,6 +204,11 @@ def test_a_registered_event_runs_its_handler_once_and_commits() -> None:
     assert runtime.transactions == 1
     assert publisher.dead_letters == []
     assert kafka.commits == 1
+    assert _consumed("job.generation.requested", "handled") == before + 1
+    body = _metrics_text()
+    assert "organization_id=" not in body
+    assert "offset=" not in body
+    assert "partition=" not in body
 
 
 def test_the_same_event_delivered_twice_runs_the_work_once() -> None:
@@ -203,6 +224,7 @@ def test_the_same_event_delivered_twice_runs_the_work_once() -> None:
     kafka = FakeKafkaConsumer(
         [FakeRecord(delivered.to_bytes()), FakeRecord(delivered.to_bytes())]
     )
+    before_dup = _consumed("job.generation.requested", "duplicate")
 
     asyncio.run(_run(consumer, kafka))
 
@@ -210,18 +232,21 @@ def test_the_same_event_delivered_twice_runs_the_work_once() -> None:
     assert runtime.transactions == 2
     assert publisher.dead_letters == []
     assert kafka.commits == 2
+    assert _consumed("job.generation.requested", "duplicate") == before_dup + 1
 
 
 def test_unreadable_bytes_go_straight_to_the_dead_letter_topic() -> None:
     runtime, publisher = FakeRuntime(), FakePublisher()
     consumer = build_consumer(runtime, publisher)
     kafka = FakeKafkaConsumer([FakeRecord(b"not-an-envelope")])
+    before = _consumed("undecodable", "dead_letter")
 
     asyncio.run(_run(consumer, kafka))
 
     assert publisher.dead_letters == [(TOPIC, b"not-an-envelope", DeadLetterReason.UNDECODABLE)]
     assert runtime.transactions == 0
     assert kafka.commits == 1
+    assert _consumed("undecodable", "dead_letter") == before + 1
 
 
 def test_an_unregistered_event_type_is_dead_lettered_without_retry() -> None:
@@ -335,11 +360,13 @@ def test_an_unreadable_record_we_cannot_set_aside_is_never_committed() -> None:
     runtime, publisher = FakeRuntime(), FakePublisher(fail=True)
     consumer = build_consumer(runtime, publisher)
     kafka = FakeKafkaConsumer([FakeRecord(b"not-an-envelope")])
+    before = _consumed("undecodable", "dead_letter")
 
     with pytest.raises(EventPublishError):
         asyncio.run(_run(consumer, kafka))
 
     assert kafka.commits == 0
+    assert _consumed("undecodable", "dead_letter") == before
 
 
 def test_an_exhausted_record_we_cannot_set_aside_is_never_committed() -> None:

@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
 
 from trialscribe_events.config import EventBusSettings
 from trialscribe_events.contracts.job import JobRequested, register_job_events
@@ -32,6 +33,20 @@ ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000051")
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000052")
 CORRELATION_ID = UUID("00000000-0000-4000-8000-000000000053")
 MAX_ATTEMPTS = 3
+
+
+def _jobs_total(kind: str, outcome: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "trialscribe_jobs_total",
+            {"kind": kind, "outcome": outcome},
+        )
+        or 0.0
+    )
+
+
+def _metrics_text() -> str:
+    return generate_latest().decode()
 
 
 class FakeKeyValueStore:
@@ -204,6 +219,7 @@ def test_a_probe_job_runs_to_completion_and_is_recorded_succeeded() -> None:
         parameters={PROBE_STEPS_PARAMETER: 4, PROBE_STEP_SECONDS_PARAMETER: 0}
     )
     runner, client = build_runner(store)
+    before = _jobs_total("probe", "succeeded")
 
     run(runner, job, store)
 
@@ -213,6 +229,8 @@ def test_a_probe_job_runs_to_completion_and_is_recorded_succeeded() -> None:
     assert job.error_code is None
     assert store.finishes == [(job.id, "succeeded")]
     assert client.values == {}
+    assert _jobs_total("probe", "succeeded") == before + 1
+    assert str(job.id) not in _metrics_text()
 
 
 def test_reported_progress_never_falls_during_a_run() -> None:
@@ -237,11 +255,14 @@ def test_a_kind_with_no_pipeline_fails_the_job_without_running_anything() -> Non
     store = FakeJobStore()
     job = store.seed(kind="section-generation")
     runner, _ = build_runner(store)
+    before = _jobs_total("unsupported", "failed")
 
     run(runner, job, store)
 
     assert job.status == JobStatus.FAILED.value
     assert job.error_code == JobErrorCode.UNSUPPORTED_KIND.value
+    assert _jobs_total("unsupported", "failed") == before + 1
+    assert str(job.id) not in _metrics_text()
 
 
 def test_a_request_whose_ticket_has_not_landed_yet_is_retried() -> None:
@@ -274,6 +295,7 @@ def test_a_failure_with_attempts_left_parks_the_job_and_asks_for_redelivery() ->
     store = FakeJobStore()
     job = store.seed(parameters={PROBE_FAIL_ATTEMPTS_PARAMETER: MAX_ATTEMPTS})
     runner, _ = build_runner(store)
+    before_failed = _jobs_total("probe", "failed")
 
     with pytest.raises(JobAttemptFailedError):
         run(runner, job, store)
@@ -281,6 +303,7 @@ def test_a_failure_with_attempts_left_parks_the_job_and_asks_for_redelivery() ->
     assert job.status == JobStatus.RETRYING.value
     assert job.attempt == 1
     assert store.finishes == []
+    assert _jobs_total("probe", "failed") == before_failed
 
 
 def test_the_final_failed_attempt_is_written_down_rather_than_dead_lettered() -> None:
@@ -290,12 +313,15 @@ def test_the_final_failed_attempt_is_written_down_rather_than_dead_lettered() ->
         attempt=MAX_ATTEMPTS - 1,
     )
     runner, _ = build_runner(store)
+    before = _jobs_total("probe", "failed")
 
     run(runner, job, store)
 
     assert job.status == JobStatus.FAILED.value
     assert job.error_code == JobErrorCode.HANDLER_FAILED.value
     assert store.finishes == [(job.id, "failed")]
+    assert _jobs_total("probe", "failed") == before + 1
+    assert str(job.id) not in _metrics_text()
 
 
 def test_a_retried_job_that_stops_failing_succeeds() -> None:
@@ -324,12 +350,15 @@ def test_a_stop_flag_raised_in_redis_ends_the_job_cancelled() -> None:
     )
     runner, client = build_runner(store)
     client.values[f"trialscribe:job:cancel:{job.id}"] = "1"
+    before = _jobs_total("probe", "cancelled")
 
     run(runner, job, store)
 
     assert job.status == JobStatus.CANCELLED.value
     assert job.error_code == JobErrorCode.CANCELLED.value
     assert job.progress == 0
+    assert _jobs_total("probe", "cancelled") == before + 1
+    assert str(job.id) not in _metrics_text()
 
 
 def test_a_stop_recorded_only_in_the_database_still_ends_the_job() -> None:

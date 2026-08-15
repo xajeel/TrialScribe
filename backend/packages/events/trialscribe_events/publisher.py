@@ -12,6 +12,7 @@ from trialscribe_events.utils.constant import (
 )
 from trialscribe_events.utils.enum import DeadLetterReason
 from trialscribe_events.utils.exceptions import EventPublishError
+from trialscribe_observability.metrics import record_event_published
 
 logger = get_event_logger(__name__)
 
@@ -67,7 +68,9 @@ class EventPublisher:
                 headers=headers or [],
             )
         except Exception:
+            record_event_published("error")
             raise EventPublishError(PUBLISH_FAILURE_MESSAGE) from None
+        record_event_published("ok")
 
     async def publish_dead_letter(
         self,
@@ -97,7 +100,9 @@ class EventPublisher:
                 "event.dead_letter_failed",
                 extra={"event_context": event_context(topic=target, reason=reason.value)},
             )
+            record_event_published("error")
             raise EventPublishError(PUBLISH_FAILURE_MESSAGE) from None
+        record_event_published("ok")
         logger.warning(
             "event.dead_lettered",
             extra={"event_context": event_context(topic=target, reason=reason.value)},

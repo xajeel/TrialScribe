@@ -2,6 +2,7 @@ import asyncio
 from uuid import UUID, uuid4
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
 
 from trialscribe_worker.config import WorkerSettings
 from trialscribe_worker.providers.fake import FakeChatProvider, FakeEmbeddingProvider, FakeFault
@@ -18,6 +19,16 @@ ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000201")
 CONVERSATION_ID = UUID("00000000-0000-4000-8000-000000000202")
 JOB_ID = UUID("00000000-0000-4000-8000-000000000203")
 ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000204")
+
+
+def _provider_calls(provider: str, operation: str, outcome: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "trialscribe_provider_calls_total",
+            {"provider": provider, "operation": operation, "outcome": outcome},
+        )
+        or 0.0
+    )
 
 
 class ManualClock:
@@ -128,11 +139,16 @@ def test_timeout_records_timeout_and_raises() -> None:
         chat=chat,
         settings=_settings(provider_timeout_seconds=0.05, provider_retry_attempts=1),
     )
+    before = _provider_calls("fake", "chat", ProviderOutcome.TIMEOUT.value)
 
     with pytest.raises(ProviderTimeoutError):
         asyncio.run(gateway.complete(_chat_request()))
 
     assert usage.rows[-1].outcome == ProviderOutcome.TIMEOUT.value
+    assert _provider_calls("fake", "chat", ProviderOutcome.TIMEOUT.value) == before + 1
+    body = generate_latest().decode()
+    assert "job_id=" not in body
+    assert str(JOB_ID) not in body
 
 
 def test_rate_limited_retries_then_succeeds_and_records_each_attempt() -> None:
@@ -188,9 +204,14 @@ def test_circuit_opens_then_rejects_without_calling_the_provider() -> None:
         with pytest.raises(ProviderUnavailableError):
             asyncio.run(gateway.complete(_chat_request()))
     calls_after_open = chat.calls
+    before_open = _provider_calls("fake", "chat", ProviderOutcome.CIRCUIT_OPEN.value)
     with pytest.raises(ProviderCircuitOpenError):
         asyncio.run(gateway.complete(_chat_request()))
     assert chat.calls == calls_after_open
+    assert _provider_calls("fake", "chat", ProviderOutcome.CIRCUIT_OPEN.value) == before_open + 1
+    body = generate_latest().decode()
+    assert "job_id=" not in body
+    assert str(JOB_ID) not in body
 
 
 def test_circuit_closes_after_open_seconds_on_success() -> None:

@@ -11,3 +11,15 @@ services:
 
   chroma:
     ports: !reset []
+
+  prometheus:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []
+
+  postgres-exporter:
+    ports: !reset []
+
+  redis-exporter:
+    ports: !reset []

@@ -94,6 +94,7 @@ class WorkerSettings(BaseSettings):
         default=DEFAULT_RESEARCH_RETRY_ATTEMPTS,
         ge=1,
     )
+    jobs_metrics_port: int = Field(default=8006, ge=1, le=65535)
 
     @field_validator("supervisor_restart_cap_seconds")
     @classmethod
