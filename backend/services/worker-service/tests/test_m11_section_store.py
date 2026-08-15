@@ -172,6 +172,23 @@ def test_recent_memory_sql_names_both_tenant_columns() -> None:
     assert "sequence" in sql
 
 
+def test_list_scoped_sql_names_both_tenant_columns() -> None:
+    session = RecordingSession()
+    store = M11SectionStore(session)  # type: ignore[arg-type]
+    try:
+        asyncio.run(store.list_scoped(ORGANIZATION_ID, CONVERSATION_ID))
+    except _Captured:
+        pass
+    sql = compiled(session.statements[0])
+    assert "trialscribe.m11_sections" in sql
+    assert "organization_id" in sql
+    assert "conversation_id" in sql
+    assert "position" in sql
+    assert "updated_at" in sql
+    assert session.parameters[0]["organization_id"] == ORGANIZATION_ID
+    assert session.parameters[0]["conversation_id"] == CONVERSATION_ID
+
+
 def test_store_modules_do_not_import_ai_engine() -> None:
     root = Path(__file__).resolve().parents[1] / "trialscribe_worker" / "repositories"
     assert "trialscribe_ai" not in (root / "m11_sections.py").read_text(encoding="utf-8")

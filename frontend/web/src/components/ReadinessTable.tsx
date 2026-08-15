@@ -23,9 +23,11 @@ function formatUpdated(value: string): string {
 function IssueList({
   issues,
   onAction,
+  checking,
 }: {
   issues: ReadonlyArray<ReadinessIssueView>;
   onAction?: (issue: ReadinessIssueView) => void;
+  checking?: boolean;
 }) {
   if (issues.length === 0) return null;
   return (
@@ -40,11 +42,23 @@ function IssueList({
             <div>
               <strong>{issue.title}</strong>
               <span>{issue.detail}</span>
-              {issue.state === "retrying" && <em role="status">Retrying in this review demonstration…</em>}
+            {issue.state === "retrying" && (
+              <em role="status">Retrying in this review demonstration…</em>
+            )}
+            {checking === true && issue.action === "retry-check" && (
+              <em role="status">Checking…</em>
+            )}
               {issue.state === "resolved" && <em role="status">Resolved in this review demonstration.</em>}
             </div>
             {issue.actionLabel !== undefined && onAction !== undefined && (
-              <button type="button" onClick={() => onAction(issue)} disabled={issue.state === "retrying"}>
+              <button
+                type="button"
+                onClick={() => onAction(issue)}
+                disabled={
+                  issue.state === "retrying" ||
+                  (checking === true && issue.action === "retry-check")
+                }
+              >
                 {issue.actionLabel}
               </button>
             )}
@@ -160,6 +174,7 @@ export function ReadinessTable({
   onOpenSection,
   onOpenEditor,
   onViewHistory,
+  checking,
 }: {
   data: ReadinessView;
   filter: ReadinessFilter;
@@ -168,6 +183,7 @@ export function ReadinessTable({
   onOpenSection?: (section: ReadinessSectionView) => void;
   onOpenEditor?: (section: ReadinessSectionView) => void;
   onViewHistory?: (section: ReadinessSectionView) => void;
+  checking?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<ReadinessSectionView | null>(null);
@@ -180,7 +196,7 @@ export function ReadinessTable({
   });
   return (
     <>
-      <IssueList issues={data.issues} onAction={onIssueAction} />
+      <IssueList issues={data.issues} onAction={onIssueAction} checking={checking} />
       <section className="readiness-sections" aria-labelledby="readiness-sections-title">
         <div className="readiness-sections__header">
           <h2 id="readiness-sections-title">ICH M11 protocol sections</h2>

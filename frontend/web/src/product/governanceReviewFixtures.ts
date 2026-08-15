@@ -5,6 +5,9 @@ import type {
   M11SectionRevision,
   M11SectionStatus,
   OrganizationIdentitySummary,
+  ReadinessIssueRecord,
+  ReadinessRecord,
+  ReadinessSectionRecord,
 } from "../api/types";
 import {
   ATTENTION_DOCUMENTS,
@@ -67,7 +70,8 @@ export type ReadinessAction =
   | "view-history"
   | "view-sources"
   | "review-citation"
-  | "retry-demo";
+  | "retry-demo"
+  | "retry-check";
 
 export interface ReadinessIssueView {
   id: string;
@@ -195,6 +199,101 @@ function latestIso(values: ReadonlyArray<string>): string | null {
     return null;
   }
   return [...values].sort((left, right) => right.localeCompare(left))[0] ?? null;
+}
+
+const READINESS_ACTIONS: ReadonlySet<ReadinessAction> = new Set([
+  "open-section",
+  "view-history",
+  "view-sources",
+  "review-citation",
+  "retry-demo",
+  "retry-check",
+]);
+
+function emptySummary(): ReadinessSummaryView {
+  return {
+    totalSections: 0,
+    doneSections: 0,
+    draftSections: 0,
+    readySources: 0,
+    pendingSources: 0,
+    failedSources: 0,
+    latestActivity: null,
+  };
+}
+
+function mapReadinessIssue(issue: ReadinessIssueRecord): ReadinessIssueView {
+  const action = READINESS_ACTIONS.has(issue.action as ReadinessAction)
+    ? (issue.action as ReadinessAction)
+    : undefined;
+  return {
+    id: issue.id,
+    title: issue.title,
+    detail: issue.detail,
+    severity: issue.severity === "error" ? "error" : "warning",
+    sectionNumber: issue.section_number ?? undefined,
+    action,
+    actionLabel: issue.action_label,
+  };
+}
+
+function mapReadinessSection(section: ReadinessSectionRecord): ReadinessSectionView {
+  return {
+    id: section.id,
+    sectionNumber: section.section_number,
+    title: section.title,
+    position: section.position,
+    status: section.status === "done" ? "done" : "draft",
+    revision: section.revision,
+    words: section.words,
+    updatedAt: section.updated_at,
+    content: section.content,
+    issues: section.issues.map(mapReadinessIssue),
+    citations:
+      section.citations === null
+        ? undefined
+        : {
+            resolved: section.citations.resolved,
+            needingReview: section.citations.needing_review,
+          },
+  };
+}
+
+/** Map a stored readiness snapshot onto the existing review view. */
+export function readinessViewFromApi(record: ReadinessRecord): ReadinessView {
+  if (!record.checked) {
+    return {
+      protocolTitle: record.protocol_title,
+      protocolId: record.protocol_id,
+      summary: emptySummary(),
+      issues: [],
+      sections: [],
+      ready: false,
+    };
+  }
+  return {
+    protocolTitle: record.protocol_title,
+    protocolId: record.protocol_id,
+    ready: record.ready,
+    summary: {
+      totalSections: record.summary.total_sections,
+      doneSections: record.summary.done_sections,
+      draftSections: record.summary.draft_sections,
+      readySources: record.summary.ready_sources,
+      pendingSources: record.summary.pending_sources,
+      failedSources: record.summary.failed_sources,
+      latestActivity: record.summary.latest_activity,
+      citations:
+        record.summary.citations === null
+          ? undefined
+          : {
+              resolved: record.summary.citations.resolved,
+              needingReview: record.summary.citations.needing_review,
+            },
+    },
+    issues: record.issues.map(mapReadinessIssue),
+    sections: record.sections.map(mapReadinessSection),
+  };
 }
 
 /** Derive only readiness facts supported by current section/document records. */

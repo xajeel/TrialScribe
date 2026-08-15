@@ -42,6 +42,7 @@ from trialscribe_worker.pipelines.index_document import run_index_document_job
 from trialscribe_worker.pipelines.probe import probe_pipeline
 from trialscribe_worker.pipelines.provider_probe import provider_probe_pipeline
 from trialscribe_worker.pipelines.research_web import run_research_web_job
+from trialscribe_worker.pipelines.validate_readiness import run_validate_readiness_job
 from trialscribe_worker.providers.factory import build_providers
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
@@ -131,6 +132,9 @@ async def run_worker(stop: asyncio.Event) -> None:
         context.gateway = gateway
         await run_generate_sections_job(context, runtime, chroma_index)
 
+    async def run_validate_readiness(context: JobContext) -> None:
+        await run_validate_readiness_job(context, runtime)
+
     runner = JobRunner(
         runtime,
         progress,
@@ -142,6 +146,7 @@ async def run_worker(stop: asyncio.Event) -> None:
             JobKind.INDEX_DOCUMENT: run_index_document,
             JobKind.RESEARCH_WEB: run_research_web,
             JobKind.GENERATE_SECTIONS: run_generate_sections,
+            JobKind.VALIDATE_READINESS: run_validate_readiness,
         },
     )
 

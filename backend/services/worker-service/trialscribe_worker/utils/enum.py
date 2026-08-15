@@ -43,6 +43,7 @@ class JobKind(StrEnum):
     INDEX_DOCUMENT = "index_document"
     RESEARCH_WEB = "research_web"
     GENERATE_SECTIONS = "generate_sections"
+    VALIDATE_READINESS = "validate_readiness"
 
 
 class GenerationAttemptStatus(StrEnum):

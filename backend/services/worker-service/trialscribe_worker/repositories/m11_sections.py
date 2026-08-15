@@ -6,7 +6,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from trialscribe_worker.models.m11_section_record import M11SectionRecord
+from trialscribe_worker.models.m11_section_record import (
+    M11SectionListRecord,
+    M11SectionRecord,
+)
 from trialscribe_worker.utils.constant import (
     GENERATE_CONTENT_MAX_LENGTH,
     M11_REVISION_ACTION_REVISED,
@@ -20,6 +23,14 @@ _GET_SCOPED = text(
     "WHERE organization_id = :organization_id "
     "AND conversation_id = :conversation_id "
     "AND section_number = :section_number"
+)
+_LIST_SCOPED = text(
+    "SELECT id, organization_id, conversation_id, section_number, title, "
+    "position, content, status, current_revision, updated_at "
+    "FROM trialscribe.m11_sections "
+    "WHERE organization_id = :organization_id "
+    "AND conversation_id = :conversation_id "
+    "ORDER BY position"
 )
 _REVISE_DRAFT = text(
     "UPDATE trialscribe.m11_sections "
@@ -85,6 +96,38 @@ class M11SectionStore:
             status=row["status"],
             current_revision=row["current_revision"],
         )
+
+    async def list_scoped(
+        self,
+        organization_id: UUID,
+        conversation_id: UUID,
+    ) -> list[M11SectionListRecord]:
+        """Load every M11 section in this organization and conversation."""
+
+        result = await self._session.execute(
+            _LIST_SCOPED,
+            {
+                "organization_id": organization_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        rows: list[M11SectionListRecord] = []
+        for row in result.mappings():
+            rows.append(
+                M11SectionListRecord(
+                    id=row["id"],
+                    organization_id=row["organization_id"],
+                    conversation_id=row["conversation_id"],
+                    section_number=row["section_number"],
+                    title=row["title"],
+                    position=int(row["position"]),
+                    content=row["content"],
+                    status=row["status"],
+                    current_revision=int(row["current_revision"]),
+                    updated_at=row["updated_at"],
+                )
+            )
+        return rows
 
     async def revise_draft(
         self,

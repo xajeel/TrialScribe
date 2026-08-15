@@ -201,6 +201,29 @@ describe("App", () => {
       if (url.includes("/m11-sections")) {
         return jsonResponse(200, { catalog_version: "2025.1", items: [] });
       }
+      if (url.includes("/v1/jobs/readiness")) {
+        return jsonResponse(200, {
+          checked: false,
+          ready: false,
+          stale: false,
+          job_id: null,
+          computed_at: null,
+          protocol_title: conversation.title,
+          protocol_id: conversation.id,
+          summary: {
+            total_sections: 0,
+            done_sections: 0,
+            draft_sections: 0,
+            ready_sources: 0,
+            pending_sources: 0,
+            failed_sources: 0,
+            latest_activity: null,
+            citations: null,
+          },
+          issues: [],
+          sections: [],
+        });
+      }
       if (url.includes("/v1/ai/conversations/conversation-1")) {
         return jsonResponse(200, conversation);
       }

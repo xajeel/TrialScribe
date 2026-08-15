@@ -16,8 +16,9 @@ def test_migration_history_is_linear_with_one_head() -> None:
     scripts = migration_scripts()
     revisions = list(scripts.walk_revisions(base="base", head="heads"))
 
-    assert scripts.get_heads() == ["0015_m11_revision_actions"]
+    assert scripts.get_heads() == ["0016_protocol_readiness_checks"]
     assert [revision.revision for revision in revisions] == [
+        "0016_protocol_readiness_checks",
         "0015_m11_revision_actions",
         "0014_section_generation_attempts",
         "0013_evidence_chunks",
@@ -60,6 +61,7 @@ def test_revision_files_stay_in_versions_directory() -> None:
         "0013_create_evidence_chunks_table.py",
         "0014_create_section_generation_attempts_table.py",
         "0015_extend_m11_revision_actions.py",
+        "0016_create_protocol_readiness_checks_table.py",
     ]
 
 
