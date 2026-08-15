@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Host ports match .env_example defaults (GATEWAY_PORT, AUTH_PORT, USER_PORT,
+# AI_PORT, WORKER_PORT, WORKER_JOBS_METRICS_PORT). Apps run on the host.
+scrape_configs:
+  - job_name: api-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+
+  - job_name: auth-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8001"]
+
+  - job_name: user-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8002"]
+
+  - job_name: ai-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8003"]
+
+  - job_name: worker-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8004"]
+
+  - job_name: worker-jobs
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8006"]
+
+  - job_name: postgres
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["redis-exporter:9121"]

@@ -15,6 +15,7 @@ from trialscribe_events.contracts.document import register_document_events
 from trialscribe_events.contracts.job import register_job_events
 from trialscribe_events.publisher import create_event_publisher
 from trialscribe_events.registry import EventRegistry
+from trialscribe_observability.http import instrument_app
 
 from trialscribe_worker.api.jobs import router as job_router
 from trialscribe_worker.config import WorkerRedisSettings, WorkerSettings
@@ -118,3 +119,6 @@ async def readiness(request: Request) -> HealthResponse:
         service=SERVICE_NAME,
         version=request.app.version,
     )
+
+
+instrument_app(app, service=SERVICE_NAME)

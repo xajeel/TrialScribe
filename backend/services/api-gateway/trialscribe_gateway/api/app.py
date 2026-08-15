@@ -9,6 +9,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from trialscribe_observability.http import instrument_app
+
 from trialscribe_gateway.api.routes import router as gateway_router
 from trialscribe_gateway.config import GatewaySettings
 from trialscribe_gateway.models.health import HealthResponse
@@ -140,6 +142,7 @@ def create_app(settings: GatewaySettings | None = None) -> FastAPI:
             version=request.app.version,
         )
 
+    instrument_app(application, service=SERVICE_NAME)
     return application
 
 

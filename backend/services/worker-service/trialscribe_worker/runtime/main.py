@@ -7,9 +7,9 @@ from urllib.parse import urlparse
 
 import chromadb
 import httpx
-from redis.asyncio import Redis
-
+from prometheus_client import start_http_server
 from pydantic import BaseModel
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_db.config import DatabaseSettings
@@ -76,6 +76,7 @@ async def run_worker(stop: asyncio.Event) -> None:
     """Own every connection the reader needs, and release them all on the way out."""
 
     worker_settings = WorkerSettings()
+    start_http_server(worker_settings.jobs_metrics_port)
     secrets = WorkerSecretSettings()
     event_settings = EventBusSettings(consumer_group=worker_settings.consumer_group)
     registry = register_document_events(register_job_events(EventRegistry()))

@@ -23,6 +23,7 @@ dependencies = [
     "tiktoken>=0.9.0,<0.10",
     "trialscribe-database",
     "trialscribe-events",
+    "trialscribe-observability",
     "unstructured>=0.17.2,<0.18",
 ]
 
@@ -32,3 +33,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trialscribe_ai"]
+
+[tool.uv.sources]
+trialscribe-observability = { workspace = true }

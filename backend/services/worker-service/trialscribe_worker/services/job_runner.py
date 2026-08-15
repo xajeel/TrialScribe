@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from trialscribe_events.config import EventBusSettings
 from trialscribe_events.contracts.job import JobRequested
 from trialscribe_events.envelope import EventEnvelope
 from trialscribe_events.logs import event_context, get_event_logger
+from trialscribe_observability.metrics import record_job
 
 from trialscribe_worker.config import WorkerSettings
 from trialscribe_worker.models.job import Job
@@ -104,6 +106,8 @@ class JobRunner:
         if job is None:
             return
 
+        started = monotonic()
+        kind = _metric_kind(job.kind)
         pipeline = self._pipeline_for(job.kind)
         if pipeline is None:
             logger.error(
@@ -115,6 +119,8 @@ class JobRunner:
                 job.id,
                 JobStatus.FAILED,
                 JobErrorCode.UNSUPPORTED_KIND,
+                kind="unsupported",
+                seconds=monotonic() - started,
             )
             return
 
@@ -143,10 +149,12 @@ class JobRunner:
                 job.id,
                 JobStatus.CANCELLED,
                 JobErrorCode.CANCELLED,
+                kind=kind,
+                seconds=monotonic() - started,
             )
             return
         except Exception:
-            await self._after_failure(session, job, envelope)
+            await self._after_failure(session, job, envelope, kind, started)
             return
 
         await self._finish(
@@ -154,6 +162,8 @@ class JobRunner:
             job.id,
             JobStatus.SUCCEEDED,
             None,
+            kind=kind,
+            seconds=monotonic() - started,
             progress=MAX_PROGRESS,
         )
 
@@ -187,6 +197,8 @@ class JobRunner:
         session: AsyncSession,
         job: Job,
         envelope: EventEnvelope,
+        kind: str,
+        started: float,
     ) -> None:
         """Retry while attempts remain; otherwise record the failure as the answer.
 
@@ -208,6 +220,8 @@ class JobRunner:
             job.id,
             JobStatus.FAILED,
             JobErrorCode.HANDLER_FAILED,
+            kind=kind,
+            seconds=monotonic() - started,
         )
 
     async def _finish(
@@ -216,6 +230,8 @@ class JobRunner:
         job_id: UUID,
         status: JobStatus,
         error_code: JobErrorCode | None,
+        kind: str,
+        seconds: float,
         progress: int | None = None,
     ) -> None:
         """Record the job's one outcome, then tidy up without risking it.
@@ -240,6 +256,7 @@ class JobRunner:
             error_code=error_code,
             progress=progress,
         )
+        record_job(kind, status.value, seconds)
         try:
             await self._progress.clear(job_id)
         except Exception:
@@ -278,3 +295,10 @@ class JobRunner:
 
     def _now(self) -> datetime:
         return datetime.now(UTC)
+
+
+def _metric_kind(kind: str) -> str:
+    try:
+        return JobKind(kind).value
+    except ValueError:
+        return "unsupported"

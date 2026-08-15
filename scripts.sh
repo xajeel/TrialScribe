@@ -80,10 +80,16 @@ ensure_env() {
     WORKER_RESEARCH_MAX_RESULTS
     WORKER_RESEARCH_TIMEOUT_SECONDS
     WORKER_RESEARCH_RETRY_ATTEMPTS
+    WORKER_JOBS_METRICS_PORT
     DEEPSEEK_API_KEY
     DEEPSEEK_BASE_URL
     CHROMA_URL
     CHROMA_PORT
+    PROMETHEUS_PORT
+    GRAFANA_PORT
+    GRAFANA_ADMIN_PASSWORD
+    POSTGRES_EXPORTER_PORT
+    REDIS_EXPORTER_PORT
     NCBI_API_KEY
     TAVILY_API_KEY
     GATEWAY_AUTH_SERVICE_URL
@@ -513,7 +519,7 @@ run_infrastructure() {
       ensure_env
       (
         cd "$repo_root"
-        "${dev_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka chroma
+        "${dev_compose[@]}" up -d --wait --wait-timeout 120 postgres redis kafka chroma prometheus grafana postgres-exporter redis-exporter
       )
       ;;
     check)
@@ -607,6 +613,7 @@ case "${1:-}" in
       uv run ruff check \
         packages/database \
         packages/events \
+        packages/observability \
         services/api-gateway \
         services/auth-service \
         services/user-service \
@@ -622,6 +629,7 @@ case "${1:-}" in
       uv run pytest \
         packages/database/tests \
         packages/events/tests \
+        packages/observability/tests \
         services/api-gateway/tests \
         services/auth-service/tests \
         services/user-service/tests \

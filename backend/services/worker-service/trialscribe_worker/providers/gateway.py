@@ -11,6 +11,7 @@ from typing import Protocol
 from uuid import UUID
 
 from trialscribe_events.logs import get_event_logger
+from trialscribe_observability.metrics import record_provider_call, set_circuit_state
 
 from trialscribe_worker.config import WorkerSettings
 from trialscribe_worker.providers.model_catalog import cost_micros
@@ -210,6 +211,7 @@ class ProviderGateway:
                         0,
                         started,
                         _outcome_for(error),
+                        breaker,
                     )
                     raise
                 else:
@@ -225,6 +227,7 @@ class ProviderGateway:
                         cache_hit_tokens,
                         started,
                         ProviderOutcome.SUCCEEDED,
+                        breaker,
                     )
                     return result
 
@@ -253,6 +256,7 @@ class ProviderGateway:
                 0,
                 started,
                 ProviderOutcome.TIMEOUT,
+                breaker,
             )
             raise timeout from timeout_error
         except ProviderCircuitOpenError:
@@ -266,6 +270,7 @@ class ProviderGateway:
                 0,
                 started,
                 ProviderOutcome.CIRCUIT_OPEN,
+                breaker,
             )
             raise
 
@@ -280,6 +285,7 @@ class ProviderGateway:
         cache_hit_tokens: int,
         started: float,
         outcome: ProviderOutcome,
+        breaker: CircuitBreaker,
     ) -> None:
         record = ProviderCallRecord(
             idempotency_key=request.idempotency_key,
@@ -304,6 +310,8 @@ class ProviderGateway:
             latency_ms=max(0, int((self._clock() - started) * 1000)),
             outcome=outcome.value,
         )
+        record_provider_call(provider_name, operation_name, outcome.value)
+        set_circuit_state(provider_name, breaker.state.value)
         try:
             await self._recorder.record(record)
         except Exception:

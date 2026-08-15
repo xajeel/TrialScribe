@@ -21,6 +21,7 @@ from trialscribe_events.utils.exceptions import (
     InvalidEventError,
     UnknownEventTypeError,
 )
+from trialscribe_observability.metrics import record_event_consumed
 
 logger = get_event_logger(__name__)
 
@@ -150,8 +151,10 @@ class EventConsumer:
                                 "event_context": event_context(envelope, topic=record.topic)
                             },
                         )
+                        record_event_consumed(envelope.event_type, "duplicate")
                         return
                     await handler(envelope, payload, session)
+                record_event_consumed(envelope.event_type, "handled")
                 return
             except Exception:
                 logger.warning(
@@ -202,4 +205,8 @@ class EventConsumer:
             record.value,
             reason,
             key=record.key,
+        )
+        record_event_consumed(
+            envelope.event_type if envelope is not None else "undecodable",
+            "dead_letter",
         )

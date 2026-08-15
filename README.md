@@ -75,9 +75,14 @@ and `up` continues to use the existing Docker Compose stack.
 ## Local infrastructure
 
 `./scripts.sh infra up` starts PostgreSQL with pgvector on `127.0.0.1:5432`, Redis on
-`127.0.0.1:6379`, and Apache Kafka on `127.0.0.1:9092`. The command creates `.env` from
-`.env_example` when needed and waits until all three containers are healthy. Update the
-local-only placeholder passwords in `.env` when your environment requires different values.
+`127.0.0.1:6379`, Apache Kafka on `127.0.0.1:9092`, Prometheus on `127.0.0.1:9090`, and
+Grafana on `127.0.0.1:3000`. The command creates `.env` from `.env_example` when needed and
+waits until the data stores and scrape stack are healthy. Update the local-only placeholder
+passwords in `.env` when your environment requires different values.
+
+After the backend processes are running (`./scripts.sh run …`), open Prometheus at
+http://127.0.0.1:9090 and Grafana at http://127.0.0.1:3000 (user `admin`, password from
+`GRAFANA_ADMIN_PASSWORD`). Provisioned boards appear under the TrialScribe folder.
 
 Development data lives in Docker named volumes under the `trialscribe-dev` Compose project.
 `infra down` stops containers without deleting those volumes, so ordinary stops and restarts

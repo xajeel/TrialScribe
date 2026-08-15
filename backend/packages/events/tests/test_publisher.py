@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 from aiokafka.errors import TopicAlreadyExistsError
+from prometheus_client import REGISTRY, generate_latest
 from pydantic import BaseModel
 
 from trialscribe_events.config import EventBusSettings
@@ -18,6 +19,16 @@ from trialscribe_events.utils.exceptions import EventError, EventPublishError
 ORGANIZATION_ID = UUID("00000000-0000-4000-8000-000000000002")
 CORRELATION_ID = UUID("00000000-0000-4000-8000-000000000003")
 OCCURRED_AT = datetime(2026, 8, 8, 12, 30, 0, tzinfo=UTC)
+
+
+def _published(result: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "trialscribe_events_published_total",
+            {"result": result},
+        )
+        or 0.0
+    )
 
 
 class JobRequested(BaseModel):
@@ -125,6 +136,7 @@ def envelope():
 def test_publish_sends_to_the_registered_topic_with_subject_key_and_headers() -> None:
     producer = FakeProducer()
     publisher = build_publisher(producer)
+    before = _published("ok")
 
     asyncio.run(publisher.publish(envelope()))
 
@@ -134,6 +146,11 @@ def test_publish_sends_to_the_registered_topic_with_subject_key_and_headers() ->
     assert record.key == b"job-1"
     assert dict(record.headers)["x-trialscribe-event-type"] == b"job.generation.requested"
     assert b"job-1" in (record.value or b"")
+    assert _published("ok") == before + 1
+    body = generate_latest().decode()
+    assert "organization_id=" not in body
+    assert "offset=" not in body
+    assert "partition=" not in body
 
 
 def test_start_and_stop_pass_through_to_the_producer() -> None:
@@ -149,12 +166,14 @@ def test_start_and_stop_pass_through_to_the_producer() -> None:
 
 def test_publish_failure_is_reported_without_leaking_broker_text() -> None:
     publisher = build_publisher(FakeProducer(fail=True))
+    before = _published("error")
 
     with pytest.raises(EventPublishError) as error:
         asyncio.run(publisher.publish(envelope()))
 
     assert str(error.value) == "event could not be published"
     assert "do-not-print" not in str(error.value)
+    assert _published("error") == before + 1
 
 
 def test_dead_letter_sends_the_untouched_record_to_the_dlq_topic() -> None:

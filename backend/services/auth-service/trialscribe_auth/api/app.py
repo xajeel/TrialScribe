@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from trialscribe_db.config import DatabaseSettings
 from trialscribe_db.runtime import create_database_runtime
+from trialscribe_observability.http import instrument_app
 
 from trialscribe_auth.api.routes import router as auth_router
 from trialscribe_auth.config import AuthSettings
@@ -89,3 +90,6 @@ async def readiness(request: Request) -> HealthResponse:
         service=SERVICE_NAME,
         version=request.app.version,
     )
+
+
+instrument_app(app, service=SERVICE_NAME)

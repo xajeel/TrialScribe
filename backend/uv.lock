@@ -10,6 +10,7 @@ members = [
     "trialscribe-database",
     "trialscribe-events",
     "trialscribe-gateway",
+    "trialscribe-observability",
     "trialscribe-user",
     "trialscribe-worker",
 ]
@@ -1716,6 +1717,15 @@ wheels = [
 ]
 
 [[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2542,6 +2552,7 @@ dependencies = [
     { name = "tiktoken" },
     { name = "trialscribe-database" },
     { name = "trialscribe-events" },
+    { name = "trialscribe-observability" },
     { name = "unstructured" },
 ]
 
@@ -2565,6 +2576,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.9.0,<0.10" },
     { name = "trialscribe-database", editable = "packages/database" },
     { name = "trialscribe-events", editable = "packages/events" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
     { name = "unstructured", specifier = ">=0.17.2,<0.18" },
 ]
 
@@ -2580,6 +2592,7 @@ dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "redis" },
     { name = "trialscribe-database" },
+    { name = "trialscribe-observability" },
 ]
 
 [package.metadata]
@@ -2591,6 +2604,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
     { name = "redis", specifier = "==8.0.1" },
     { name = "trialscribe-database", editable = "packages/database" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
 ]
 
 [[package]]
@@ -2646,6 +2660,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "trialscribe-database" },
+    { name = "trialscribe-observability" },
 ]
 
 [package.metadata]
@@ -2654,6 +2669,7 @@ requires-dist = [
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = "==2.14.2" },
     { name = "trialscribe-database", editable = "packages/database" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
 ]
 
 [[package]]
@@ -2665,6 +2681,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "trialscribe-observability" },
 ]
 
 [package.metadata]
@@ -2673,6 +2690,22 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pydantic-settings", specifier = "==2.14.2" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
+]
+
+[[package]]
+name = "trialscribe-observability"
+version = "0.1.0"
+source = { editable = "packages/observability" }
+dependencies = [
+    { name = "prometheus-client" },
+    { name = "starlette" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "prometheus-client", specifier = "==0.26.0" },
+    { name = "starlette", specifier = "==0.46.2" },
 ]
 
 [[package]]
@@ -2685,6 +2718,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "trialscribe-database" },
+    { name = "trialscribe-observability" },
 ]
 
 [package.metadata]
@@ -2694,6 +2728,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = "==2.14.2" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
     { name = "trialscribe-database", editable = "packages/database" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
 ]
 
 [[package]]
@@ -2712,6 +2747,7 @@ dependencies = [
     { name = "redis" },
     { name = "trialscribe-database" },
     { name = "trialscribe-events" },
+    { name = "trialscribe-observability" },
 ]
 
 [package.metadata]
@@ -2727,6 +2763,7 @@ requires-dist = [
     { name = "redis", specifier = "==8.0.1" },
     { name = "trialscribe-database", editable = "packages/database" },
     { name = "trialscribe-events", editable = "packages/events" },
+    { name = "trialscribe-observability", editable = "packages/observability" },
 ]
 
 [[package]]
