@@ -16,3 +16,22 @@ evidence_index/
 videos/
 .sdlc/
 .cursor/
+.claude/
+
+# Frontend (React)
+node_modules/
+frontend/web/dist/
+
+# Release backups
+/backups/
+
+# k6 load summaries
+/infra/k6/results/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.agents/
+# Local release backups and load-test output
+backups/
+infra/k6/results/

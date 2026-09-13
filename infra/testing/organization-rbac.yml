@@ -1,0 +1,5 @@
+# Publish only the organization-RBAC database on a Docker-assigned loopback port.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1::5432"

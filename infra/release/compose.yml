@@ -1,0 +1,377 @@
+x-backend-build: &backend-build
+  context: ./backend
+  dockerfile: Dockerfile
+  network: host
+
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  EVENTS_BOOTSTRAP_SERVERS: kafka:29092
+  CHROMA_URL: http://chroma:8000
+  GATEWAY_AUTH_SERVICE_URL: http://auth:8001
+  GATEWAY_USER_SERVICE_URL: http://user:8002
+  GATEWAY_AI_SERVICE_URL: http://ai:8003
+  GATEWAY_WORKER_SERVICE_URL: http://worker:8004
+  WORKER_CHAT_PROVIDER: fake
+  WORKER_EMBEDDING_PROVIDER: fake
+  GATEWAY_CORS_ORIGINS: http://localhost:${RELEASE_WEB_PORT:-8080},http://127.0.0.1:${RELEASE_WEB_PORT:-8080},http://localhost:5173,http://127.0.0.1:5173
+  USER_INVITATION_ACCEPT_URL: http://localhost:${RELEASE_WEB_PORT:-8080}/invitations/accept
+
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  kafka:
+    ports: !reset []
+
+  chroma:
+    ports: !reset []
+
+  postgres-exporter:
+    ports: !reset []
+
+  redis-exporter:
+    ports: !reset []
+
+  prometheus:
+    volumes:
+      - ./infra/prometheus/prometheus.release.yml:/etc/prometheus/prometheus.yml:ro
+
+  migrate:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-database
+      - alembic
+      - -c
+      - packages/database/alembic.ini
+      - upgrade
+      - head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  gateway:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-gateway
+      - uvicorn
+      - trialscribe_gateway.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --timeout-graceful-shutdown
+      - "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}"
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      auth:
+        condition: service_healthy
+      user:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  auth:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-auth
+      - uvicorn
+      - trialscribe_auth.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8001"
+      - --timeout-graceful-shutdown
+      - "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  user:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-user
+      - uvicorn
+      - trialscribe_user.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8002"
+      - --timeout-graceful-shutdown
+      - "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  ai:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-ai
+      - uvicorn
+      - trialscribe_ai.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8003"
+      - --timeout-graceful-shutdown
+      - "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  worker:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-worker
+      - uvicorn
+      - trialscribe_worker.api.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8004"
+      - --timeout-graceful-shutdown
+      - "${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-30}"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health/ready')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+
+  jobs:
+    profiles:
+      - release
+    build: *backend-build
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    command:
+      - uv
+      - run
+      - --frozen
+      - --package
+      - trialscribe-worker
+      - python
+      - -m
+      - trialscribe_worker.runtime.main
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/metrics')",
+        ]
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 12
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+
+  web:
+    profiles:
+      - release
+    build:
+      context: .
+      dockerfile: frontend/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: http://127.0.0.1:${GATEWAY_PORT:-8000}
+    ports:
+      - "127.0.0.1:${RELEASE_WEB_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M

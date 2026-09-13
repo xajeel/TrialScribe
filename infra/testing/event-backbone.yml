@@ -1,0 +1,11 @@
+# Publish the event-backbone test database on a Docker-assigned loopback port, and
+# Kafka on its configured host port — the broker advertises localhost:${KAFKA_PORT},
+# so a client can only reach it on that exact port.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1::5432"
+
+  kafka:
+    ports:
+      - "127.0.0.1:${KAFKA_PORT}:9092"

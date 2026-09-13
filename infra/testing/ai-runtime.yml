@@ -1,0 +1,19 @@
+# Publish the AI-runtime test database, Redis, Kafka, and Chroma on
+# Docker-assigned loopback ports. Kafka stays on its configured host port
+# because the broker advertises localhost:${KAFKA_PORT}.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1::5432"
+
+  redis:
+    ports:
+      - "127.0.0.1::6379"
+
+  kafka:
+    ports:
+      - "127.0.0.1:${KAFKA_PORT}:9092"
+
+  chroma:
+    ports:
+      - "127.0.0.1::8000"

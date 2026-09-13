@@ -1,0 +1,14 @@
+.git
+.venv
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+.sdlc
+.cursor
+.claude
+.env
+backups
+frontend/web/dist
+infra/k6/results
