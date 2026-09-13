@@ -1,5 +1,6 @@
 """Read and write evidence_chunks with both tenant columns on every get."""
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -20,6 +21,20 @@ class EvidenceChunkRepository:
         self._session.add(chunk)
         await self._session.flush()
         return chunk
+
+    async def add_many(self, chunks: Sequence[EvidenceChunk]) -> list[EvidenceChunk]:
+        """Store a batch of passages in one round trip.
+
+        Indexing a document produces one passage per chunk; flushing each of them
+        separately turns a single insert into hundreds of round trips to
+        PostgreSQL. One flush writes the whole batch.
+        """
+
+        if not chunks:
+            return []
+        self._session.add_all(chunks)
+        await self._session.flush()
+        return list(chunks)
 
     async def get_scoped(
         self,
