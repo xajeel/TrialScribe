@@ -85,6 +85,32 @@ app.include_router(evidence_router)
 app.include_router(m11_section_router)
 
 
+_ERROR_RESPONSES: tuple[tuple[type[AIEngineError], int, str], ...] = (
+    (ConversationNotFoundError, 404, CONVERSATION_NOT_FOUND_DETAIL),
+    (ConversationPermissionDeniedError, 403, CONVERSATION_PERMISSION_DENIED_DETAIL),
+    (ConversationArchivedError, 409, CONVERSATION_ARCHIVED_DETAIL),
+    (CollaboratorConflictError, 409, COLLABORATOR_CONFLICT_DETAIL),
+    (InvalidCursorError, 422, INVALID_CURSOR_DETAIL),
+    (InvalidConversationInputError, 422, INVALID_CONVERSATION_INPUT_DETAIL),
+    (DocumentNotFoundError, 404, DOCUMENT_NOT_FOUND_DETAIL),
+    (UnsupportedDocumentTypeError, 415, UNSUPPORTED_DOCUMENT_TYPE_DETAIL),
+    (DocumentTooLargeError, 413, DOCUMENT_TOO_LARGE_DETAIL),
+    (InvalidTrialDataError, 422, INVALID_TRIAL_DATA_DETAIL),
+    (EmptyDocumentError, 422, EMPTY_DOCUMENT_DETAIL),
+    (InvalidEvidenceRequestError, 422, INVALID_EVIDENCE_IDS_DETAIL),
+    (M11SectionNotFoundError, 404, M11_SECTION_NOT_FOUND_DETAIL),
+    (InvalidM11SectionInputError, 422, INVALID_M11_SECTION_INPUT_DETAIL),
+    (M11SectionRevisionConflictError, 409, M11_SECTION_REVISION_CONFLICT_DETAIL),
+    (M11SectionTransitionError, 409, M11_SECTION_TRANSITION_DETAIL),
+)
+"""Which public answer each expected failure earns.
+
+Ordered most specific first, so a subclass never matches its parent's row. The
+detail strings are fixed and allow-listed: an exception's own text never reaches
+a caller.
+"""
+
+
 @app.exception_handler(AIEngineError)
 async def ai_engine_error_response(
     _request: Request,
@@ -92,41 +118,10 @@ async def ai_engine_error_response(
 ) -> JSONResponse:
     """Translate expected failures without exposing exception text."""
 
-    if isinstance(error, ConversationNotFoundError):
-        status_code, detail = 404, CONVERSATION_NOT_FOUND_DETAIL
-    elif isinstance(error, ConversationPermissionDeniedError):
-        status_code, detail = 403, CONVERSATION_PERMISSION_DENIED_DETAIL
-    elif isinstance(error, ConversationArchivedError):
-        status_code, detail = 409, CONVERSATION_ARCHIVED_DETAIL
-    elif isinstance(error, CollaboratorConflictError):
-        status_code, detail = 409, COLLABORATOR_CONFLICT_DETAIL
-    elif isinstance(error, InvalidCursorError):
-        status_code, detail = 422, INVALID_CURSOR_DETAIL
-    elif isinstance(error, InvalidConversationInputError):
-        status_code, detail = 422, INVALID_CONVERSATION_INPUT_DETAIL
-    elif isinstance(error, DocumentNotFoundError):
-        status_code, detail = 404, DOCUMENT_NOT_FOUND_DETAIL
-    elif isinstance(error, UnsupportedDocumentTypeError):
-        status_code, detail = 415, UNSUPPORTED_DOCUMENT_TYPE_DETAIL
-    elif isinstance(error, DocumentTooLargeError):
-        status_code, detail = 413, DOCUMENT_TOO_LARGE_DETAIL
-    elif isinstance(error, InvalidTrialDataError):
-        status_code, detail = 422, INVALID_TRIAL_DATA_DETAIL
-    elif isinstance(error, EmptyDocumentError):
-        status_code, detail = 422, EMPTY_DOCUMENT_DETAIL
-    elif isinstance(error, InvalidEvidenceRequestError):
-        status_code, detail = 422, INVALID_EVIDENCE_IDS_DETAIL
-    elif isinstance(error, M11SectionNotFoundError):
-        status_code, detail = 404, M11_SECTION_NOT_FOUND_DETAIL
-    elif isinstance(error, InvalidM11SectionInputError):
-        status_code, detail = 422, INVALID_M11_SECTION_INPUT_DETAIL
-    elif isinstance(error, M11SectionRevisionConflictError):
-        status_code, detail = 409, M11_SECTION_REVISION_CONFLICT_DETAIL
-    elif isinstance(error, M11SectionTransitionError):
-        status_code, detail = 409, M11_SECTION_TRANSITION_DETAIL
-    else:
-        status_code, detail = 500, SERVICE_UNAVAILABLE_DETAIL
-    return JSONResponse(status_code=status_code, content={"detail": detail})
+    for error_type, status_code, detail in _ERROR_RESPONSES:
+        if isinstance(error, error_type):
+            return JSONResponse(status_code=status_code, content={"detail": detail})
+    return JSONResponse(status_code=500, content={"detail": SERVICE_UNAVAILABLE_DETAIL})
 
 
 @app.exception_handler(RequestValidationError)
