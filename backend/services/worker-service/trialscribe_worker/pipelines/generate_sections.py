@@ -1,26 +1,37 @@
-"""Draft requested M11 sections from tenant-scoped evidence with citations."""
+"""Draft requested M11 sections from tenant-scoped evidence with citations.
+
+One implementation serves both callers. `generate_sections_pipeline` takes a
+store scope: in production that scope opens a short database transaction per
+unit of work, so no SQL transaction stays open across a chat completion; in
+tests it hands back in-memory doubles. The drafting rules live in one place, so
+what the tests prove is what production runs.
+"""
 
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 from trialscribe_db.runtime import DatabaseRuntime
 
-from trialscribe_worker.config import WorkerSettings
+from trialscribe_worker.config import WorkerSettings, worker_settings
+from trialscribe_worker.models.evidence_chunk import EvidenceChunk
+from trialscribe_worker.models.m11_section_record import M11SectionRecord
+from trialscribe_worker.pipelines.scope import (
+    AttemptStore,
+    BoundScope,
+    GenerationScope,
+    GenerationStores,
+    TransactionScope,
+    generation_stores_from,
+    require_gateway,
+)
 from trialscribe_worker.prompts.section_generation import (
     section_generation_messages,
     section_rewrite_messages,
 )
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.providers.types import ChatRequest
-from trialscribe_worker.repositories.conversation_memory import ConversationMemoryStore
-from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
-from trialscribe_worker.repositories.m11_sections import M11SectionStore
-from trialscribe_worker.repositories.section_generation_attempts import (
-    SectionGenerationAttemptRepository,
-)
-from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
+from trialscribe_worker.retrieval.chroma_index import ChromaIndex
 from trialscribe_worker.retrieval.citations import apply_citations, parse_cite_ids
 from trialscribe_worker.retrieval.retriever import ConversationRetriever
 from trialscribe_worker.services.job_runner import JobContext
@@ -64,6 +75,14 @@ _PROVIDER_ERRORS = (
     ProviderCircuitOpenError,
     ProviderConfigError,
 )
+
+_START_PERCENT = 10
+_WORK_PERCENT = 80
+_DONE_PERCENT = 100
+
+_SUCCEEDED = GenerationAttemptStatus.SUCCEEDED.value
+_SKIPPED = GenerationAttemptStatus.SKIPPED.value
+_FAILED = GenerationAttemptStatus.FAILED.value
 
 
 def parse_generate_request(parameters: dict[str, object]) -> list[tuple[str, int]]:
@@ -159,8 +178,19 @@ def _job_mode(parameters: dict[str, object]) -> str:
     return str(mode)
 
 
+@dataclass(frozen=True, slots=True)
+class _SectionPlan:
+    """What one section needs before any provider is called."""
+
+    outcome: str | None
+    record: M11SectionRecord | None = None
+    query: str = ""
+    memory: tuple[tuple[str, str], ...] = ()
+
+
 async def _record(
     context: JobContext,
+    attempts: AttemptStore,
     section_number: str,
     status: str,
     *,
@@ -170,13 +200,11 @@ async def _record(
     error_code: str | None = None,
     citation_ids: list[str] | None = None,
 ) -> None:
-    attempts = getattr(context.generate, "attempts", None)
-    add = getattr(attempts, "add", None)
-    if not callable(add):
-        raise WorkerServiceError
+    """Write exactly one row describing what this section attempt did."""
+
     if context.conversation_id is None:
         raise InvalidJobInputError
-    await add(
+    await attempts.add(
         organization_id=context.organization_id,
         conversation_id=context.conversation_id,
         job_id=context.job_id,
@@ -191,96 +219,129 @@ async def _record(
     )
 
 
-async def generate_one_section(
+def _retrieval_query(record: M11SectionRecord) -> str:
+    if record.instructions.strip():
+        return f"{record.title}\n{record.instructions}"
+    return record.title
+
+
+def _trial_passages(evidence: list[EvidenceChunk]) -> list[str]:
+    return [
+        chunk.text for chunk in evidence if chunk.source_kind == EVIDENCE_SOURCE_TRIAL_DATA
+    ]
+
+
+async def _plan_section(
     context: JobContext,
+    stores: GenerationStores,
     section_number: str,
     expected_revision: int,
-) -> str:
-    """Draft one section. Return succeeded, skipped, or failed."""
+) -> _SectionPlan:
+    """Decide whether this section may be drafted, and gather what drafting needs.
 
-    if context.gateway is None or context.evidence is None or context.generate is None:
-        raise WorkerServiceError
-    if not isinstance(context.gateway, ProviderGateway):
-        raise WorkerServiceError
-    if not isinstance(context.evidence, EvidenceIndex):
-        raise WorkerServiceError
-    if context.conversation_id is None:
-        raise InvalidJobInputError
-    sections = getattr(context.generate, "sections", None)
-    memory_store = getattr(context.generate, "memory", None)
-    get_scoped = getattr(sections, "get_scoped", None)
-    revise_draft = getattr(sections, "revise_draft", None)
-    recent = getattr(memory_store, "recent", None)
-    if not callable(get_scoped) or not callable(revise_draft) or not callable(recent):
-        raise WorkerServiceError
-    conversation_id = context.conversation_id
-    record = await get_scoped(
+    Everything here is a read except the attempt row written when the answer is
+    no, which is why it belongs in one short scope of its own.
+    """
+
+    record = await stores.sections.get_scoped(
         context.organization_id,
-        conversation_id,
+        context.conversation_id,  # type: ignore[arg-type]
         section_number,
     )
     if record is None:
         await _record(
             context,
+            stores.attempts,
             section_number,
-            GenerationAttemptStatus.FAILED.value,
+            _FAILED,
             error_code=GenerationErrorCode.MISSING_SECTION.value,
         )
-        return GenerationAttemptStatus.FAILED.value
+        return _SectionPlan(outcome=_FAILED)
     if record.status == M11_SECTION_DONE_STATUS:
-        await _record(
-            context,
-            section_number,
-            GenerationAttemptStatus.SKIPPED.value,
-        )
-        return GenerationAttemptStatus.SKIPPED.value
+        await _record(context, stores.attempts, section_number, _SKIPPED)
+        return _SectionPlan(outcome=_SKIPPED)
     if record.current_revision != expected_revision:
         await _record(
             context,
+            stores.attempts,
             section_number,
-            GenerationAttemptStatus.SKIPPED.value,
+            _SKIPPED,
             error_code=GenerationErrorCode.REVISION_CONFLICT.value,
         )
-        return GenerationAttemptStatus.SKIPPED.value
-    settings = WorkerSettings()
-    query = record.title
-    if record.instructions.strip():
-        query = f"{record.title}\n{record.instructions}"
-    retriever = ConversationRetriever(context.gateway, context.evidence, settings)
-    try:
-        retrieved = await retriever.retrieve(
+        return _SectionPlan(outcome=_SKIPPED)
+    turns = await stores.memory.recent(
+        context.organization_id,
+        context.conversation_id,  # type: ignore[arg-type]
+        GENERATE_MEMORY_TURN_LIMIT,
+    )
+    return _SectionPlan(
+        outcome=None,
+        record=record,
+        query=_retrieval_query(record),
+        memory=tuple(turns),
+    )
+
+
+async def _retrieve(
+    context: JobContext,
+    gateway: ProviderGateway,
+    stores: GenerationStores,
+    settings: WorkerSettings,
+    query: str,
+) -> list[EvidenceChunk]:
+    retriever = ConversationRetriever(gateway, stores.evidence, settings)
+    return list(
+        await retriever.retrieve(
             organization_id=context.organization_id,
-            conversation_id=conversation_id,
+            conversation_id=context.conversation_id,
             query=query,
             job_id=context.job_id,
             account_id=context.account_id,
             k=settings.retrieve_k,
         )
-        turns = await recent(
-            context.organization_id,
-            conversation_id,
-            GENERATE_MEMORY_TURN_LIMIT,
-        )
-        trial_passages = [
-            chunk.text
-            for chunk in retrieved
-            if chunk.source_kind == EVIDENCE_SOURCE_TRIAL_DATA
-        ]
+    )
+
+
+async def generate_one_section(
+    context: JobContext,
+    section_number: str,
+    expected_revision: int,
+    scope: GenerationScope | None = None,
+) -> str:
+    """Draft one section. Return succeeded, skipped, or failed."""
+
+    gateway = require_gateway(context)
+    active = scope if scope is not None else BoundScope(generation_stores_from(context))
+    if context.conversation_id is None:
+        raise InvalidJobInputError
+    settings = worker_settings()
+
+    async with active.open() as stores:
+        plan = await _plan_section(context, stores, section_number, expected_revision)
+    if plan.outcome is not None:
+        return plan.outcome
+    record = plan.record
+    if record is None:
+        raise WorkerServiceError
+
+    try:
+        async with active.open() as stores:
+            retrieved = await _retrieve(context, gateway, stores, settings, plan.query)
         messages = section_generation_messages(
             section_number=record.section_number,
             title=record.title,
             instructions=record.instructions,
-            trial_passages=trial_passages,
-            evidence=list(retrieved),
-            memory=list(turns),
+            trial_passages=_trial_passages(retrieved),
+            evidence=retrieved,
+            memory=list(plan.memory),
         )
         prompt = "\n\n".join(message.content for message in messages)
-        completed = await context.gateway.complete(
+        completed = await gateway.complete(
             ChatRequest(
                 messages=messages,
                 model=settings.chat_model,
                 organization_id=context.organization_id,
-                conversation_id=conversation_id,
+                conversation_id=context.conversation_id,
                 job_id=context.job_id,
                 account_id=context.account_id,
                 idempotency_key=(
@@ -290,57 +351,64 @@ async def generate_one_section(
             )
         )
     except _PROVIDER_ERRORS:
-        await _record(
-            context,
-            section_number,
-            GenerationAttemptStatus.FAILED.value,
-            error_code=GenerationErrorCode.PROVIDER_FAILED.value,
-        )
-        return GenerationAttemptStatus.FAILED.value
-    allowed = {chunk.id for chunk in retrieved}
-    cleaned = apply_citations(completed.text, allowed).strip()
+        async with active.open() as stores:
+            await _record(
+                context,
+                stores.attempts,
+                section_number,
+                _FAILED,
+                error_code=GenerationErrorCode.PROVIDER_FAILED.value,
+            )
+        return _FAILED
+
+    cleaned = apply_citations(completed.text, {chunk.id for chunk in retrieved}).strip()
     if not cleaned:
-        await _record(
-            context,
+        async with active.open() as stores:
+            await _record(
+                context,
+                stores.attempts,
+                section_number,
+                _FAILED,
+                model=completed.model,
+                prompt=prompt,
+                error_code=GenerationErrorCode.EMPTY_OUTPUT.value,
+            )
+        return _FAILED
+
+    async with active.open() as stores:
+        saved = await stores.sections.revise_draft(
+            context.organization_id,
+            context.conversation_id,
             section_number,
-            GenerationAttemptStatus.FAILED.value,
-            model=completed.model,
-            prompt=prompt,
-            error_code=GenerationErrorCode.EMPTY_OUTPUT.value,
+            expected_revision=expected_revision,
+            content=cleaned,
+            author_account_id=context.account_id,
+            now=datetime.now(UTC),
+            action=M11_REVISION_ACTION_GENERATED,
         )
-        return GenerationAttemptStatus.FAILED.value
-    saved = await revise_draft(
-        context.organization_id,
-        conversation_id,
-        section_number,
-        expected_revision=expected_revision,
-        content=cleaned,
-        author_account_id=context.account_id,
-        now=datetime.now(UTC),
-        action=M11_REVISION_ACTION_GENERATED,
-    )
-    if not saved:
+        if not saved:
+            await _record(
+                context,
+                stores.attempts,
+                section_number,
+                _FAILED,
+                model=completed.model,
+                prompt=prompt,
+                content=cleaned,
+                error_code=GenerationErrorCode.REVISION_CONFLICT.value,
+            )
+            return _FAILED
         await _record(
             context,
+            stores.attempts,
             section_number,
-            GenerationAttemptStatus.FAILED.value,
+            _SUCCEEDED,
             model=completed.model,
             prompt=prompt,
             content=cleaned,
-            error_code=GenerationErrorCode.REVISION_CONFLICT.value,
+            citation_ids=[str(chunk_id) for chunk_id in parse_cite_ids(cleaned)],
         )
-        return GenerationAttemptStatus.FAILED.value
-    cited = [str(chunk_id) for chunk_id in parse_cite_ids(cleaned)]
-    await _record(
-        context,
-        section_number,
-        GenerationAttemptStatus.SUCCEEDED.value,
-        model=completed.model,
-        prompt=prompt,
-        content=cleaned,
-        citation_ids=cited,
-    )
-    return GenerationAttemptStatus.SUCCEEDED.value
+    return _SUCCEEDED
 
 
 def _selection_slice(
@@ -370,50 +438,32 @@ def _apply_rewrite(
     return original[:start] + cleaned + original[end:]
 
 
-async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> str:
+async def rewrite_one_section(
+    context: JobContext,
+    request: RewriteRequest,
+    scope: GenerationScope | None = None,
+) -> str:
     """Propose two rewrite options without saving the section."""
 
-    if context.gateway is None or context.evidence is None or context.generate is None:
-        raise WorkerServiceError
-    if not isinstance(context.gateway, ProviderGateway):
-        raise WorkerServiceError
+    gateway = require_gateway(context)
+    active = scope if scope is not None else BoundScope(generation_stores_from(context))
     if context.conversation_id is None:
         raise InvalidJobInputError
-    sections = getattr(context.generate, "sections", None)
-    memory_store = getattr(context.generate, "memory", None)
-    get_scoped = getattr(sections, "get_scoped", None)
-    recent = getattr(memory_store, "recent", None)
-    if not callable(get_scoped) or not callable(recent):
-        raise WorkerServiceError
-    conversation_id = context.conversation_id
-    record = await get_scoped(
-        context.organization_id,
-        conversation_id,
-        request.section_number,
-    )
+    settings = worker_settings()
+
+    async with active.open() as stores:
+        plan = await _plan_section(
+            context,
+            stores,
+            request.section_number,
+            request.expected_revision,
+        )
+    if plan.outcome is not None:
+        return plan.outcome
+    record = plan.record
     if record is None:
-        await _record(
-            context,
-            request.section_number,
-            GenerationAttemptStatus.FAILED.value,
-            error_code=GenerationErrorCode.MISSING_SECTION.value,
-        )
-        return GenerationAttemptStatus.FAILED.value
-    if record.status == M11_SECTION_DONE_STATUS:
-        await _record(
-            context,
-            request.section_number,
-            GenerationAttemptStatus.SKIPPED.value,
-        )
-        return GenerationAttemptStatus.SKIPPED.value
-    if record.current_revision != request.expected_revision:
-        await _record(
-            context,
-            request.section_number,
-            GenerationAttemptStatus.SKIPPED.value,
-            error_code=GenerationErrorCode.REVISION_CONFLICT.value,
-        )
-        return GenerationAttemptStatus.SKIPPED.value
+        raise WorkerServiceError
+
     try:
         selected, _ = _selection_slice(
             record.content,
@@ -421,54 +471,40 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
             request.selection_end,
         )
     except ValueError:
-        await _record(
-            context,
-            request.section_number,
-            GenerationAttemptStatus.FAILED.value,
-            error_code=GenerationErrorCode.INVALID_SELECTION.value,
-        )
-        return GenerationAttemptStatus.FAILED.value
-    settings = WorkerSettings()
-    retrieved: list[object] = []
-    trial_passages: list[str] = []
-    await context.check_cancelled()
-    turns = await recent(
-        context.organization_id,
-        conversation_id,
-        GENERATE_MEMORY_TURN_LIMIT,
-    )
-    if request.use_sources:
-        if not isinstance(context.evidence, EvidenceIndex):
-            raise WorkerServiceError
-        query = record.title
-        if record.instructions.strip():
-            query = f"{record.title}\n{record.instructions}"
-        retriever = ConversationRetriever(context.gateway, context.evidence, settings)
-        await context.check_cancelled()
-        try:
-            retrieved = list(
-                await retriever.retrieve(
-                    organization_id=context.organization_id,
-                    conversation_id=conversation_id,
-                    query=query,
-                    job_id=context.job_id,
-                    account_id=context.account_id,
-                    k=settings.retrieve_k,
-                )
-            )
-        except _PROVIDER_ERRORS:
+        async with active.open() as stores:
             await _record(
                 context,
+                stores.attempts,
                 request.section_number,
-                GenerationAttemptStatus.FAILED.value,
-                error_code=GenerationErrorCode.PROVIDER_FAILED.value,
+                _FAILED,
+                error_code=GenerationErrorCode.INVALID_SELECTION.value,
             )
-            return GenerationAttemptStatus.FAILED.value
-        trial_passages = [
-            chunk.text
-            for chunk in retrieved
-            if chunk.source_kind == EVIDENCE_SOURCE_TRIAL_DATA
-        ]
+        return _FAILED
+
+    await context.check_cancelled()
+    retrieved: list[EvidenceChunk] = []
+    if request.use_sources:
+        await context.check_cancelled()
+        try:
+            async with active.open() as stores:
+                retrieved = await _retrieve(
+                    context,
+                    gateway,
+                    stores,
+                    settings,
+                    plan.query,
+                )
+        except _PROVIDER_ERRORS:
+            async with active.open() as stores:
+                await _record(
+                    context,
+                    stores.attempts,
+                    request.section_number,
+                    _FAILED,
+                    error_code=GenerationErrorCode.PROVIDER_FAILED.value,
+                )
+            return _FAILED
+
     allowed = {chunk.id for chunk in retrieved} if request.use_sources else set()
     options: list[dict[str, str]] = []
     prompts: list[str] = []
@@ -479,24 +515,23 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
             section_number=record.section_number,
             title=record.title,
             instructions=record.instructions,
-            trial_passages=trial_passages,
+            trial_passages=_trial_passages(retrieved),
             evidence=retrieved,
-            memory=list(turns),
+            memory=list(plan.memory),
             current_content=record.content,
             selected_passage=selected,
             instruction=request.instruction,
             variant_hint=hint,
         )
-        prompt = "\n\n".join(message.content for message in messages)
-        prompts.append(prompt)
+        prompts.append("\n\n".join(message.content for message in messages))
         await context.check_cancelled()
         try:
-            completed = await context.gateway.complete(
+            completed = await gateway.complete(
                 ChatRequest(
                     messages=messages,
                     model=settings.chat_model,
                     organization_id=context.organization_id,
-                    conversation_id=conversation_id,
+                    conversation_id=context.conversation_id,
                     job_id=context.job_id,
                     account_id=context.account_id,
                     idempotency_key=(
@@ -507,14 +542,16 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
                 )
             )
         except _PROVIDER_ERRORS:
-            await _record(
-                context,
-                request.section_number,
-                GenerationAttemptStatus.FAILED.value,
-                prompt="\n\n---\n\n".join(prompts),
-                error_code=GenerationErrorCode.PROVIDER_FAILED.value,
-            )
-            return GenerationAttemptStatus.FAILED.value
+            async with active.open() as stores:
+                await _record(
+                    context,
+                    stores.attempts,
+                    request.section_number,
+                    _FAILED,
+                    prompt="\n\n---\n\n".join(prompts),
+                    error_code=GenerationErrorCode.PROVIDER_FAILED.value,
+                )
+            return _FAILED
         model = completed.model
         full = _apply_rewrite(
             record.content,
@@ -525,76 +562,80 @@ async def rewrite_one_section(context: JobContext, request: RewriteRequest) -> s
             request.keep_citations,
         ).strip()
         if not full:
-            await _record(
-                context,
-                request.section_number,
-                GenerationAttemptStatus.FAILED.value,
-                model=model,
-                prompt="\n\n---\n\n".join(prompts),
-                error_code=GenerationErrorCode.EMPTY_OUTPUT.value,
-            )
-            return GenerationAttemptStatus.FAILED.value
-        option_id = f"alternative-{index + 1}"
-        options.append({"id": option_id, "text": full})
+            async with active.open() as stores:
+                await _record(
+                    context,
+                    stores.attempts,
+                    request.section_number,
+                    _FAILED,
+                    model=model,
+                    prompt="\n\n---\n\n".join(prompts),
+                    error_code=GenerationErrorCode.EMPTY_OUTPUT.value,
+                )
+            return _FAILED
+        options.append({"id": f"alternative-{index + 1}", "text": full})
         cited.extend(str(chunk_id) for chunk_id in parse_cite_ids(full))
-    unique_cites = list(dict.fromkeys(cited))
-    await _record(
-        context,
-        request.section_number,
-        GenerationAttemptStatus.SUCCEEDED.value,
-        model=model,
-        prompt="\n\n---\n\n".join(prompts),
-        content=json.dumps({"kind": REWRITE_OPTIONS_KIND, "items": options}),
-        citation_ids=unique_cites,
-    )
-    return GenerationAttemptStatus.SUCCEEDED.value
+
+    async with active.open() as stores:
+        await _record(
+            context,
+            stores.attempts,
+            request.section_number,
+            _SUCCEEDED,
+            model=model,
+            prompt="\n\n---\n\n".join(prompts),
+            content=json.dumps({"kind": REWRITE_OPTIONS_KIND, "items": options}),
+            citation_ids=list(dict.fromkeys(cited)),
+        )
+    return _SUCCEEDED
 
 
-async def generate_sections_pipeline(context: JobContext) -> None:
-    """Draft every requested section that still matches its expected revision."""
+async def generate_sections_pipeline(
+    context: JobContext,
+    scope: GenerationScope | None = None,
+) -> None:
+    """Draft every requested section that still matches its expected revision.
 
-    if context.gateway is None or context.evidence is None or context.generate is None:
-        raise WorkerServiceError
+    Sections succeed or fail independently: one failure never discards a draft
+    that already landed, and the job still ends failed so the caller can retry
+    only what is still empty.
+    """
+
+    require_gateway(context)
+    active = scope if scope is not None else BoundScope(generation_stores_from(context))
     if context.conversation_id is None:
         raise InvalidJobInputError
+
     if _job_mode(context.parameters) == GENERATE_MODE_REWRITE:
         request = parse_rewrite_request(context.parameters)
-        await context.report(10)
+        await context.report(_START_PERCENT)
         await context.check_cancelled()
-        outcome = await rewrite_one_section(context, request)
-        if outcome == GenerationAttemptStatus.FAILED.value:
+        if await rewrite_one_section(context, request, active) == _FAILED:
             raise GenerateSectionError
-        await context.report(100)
+        await context.report(_DONE_PERCENT)
         return
+
     requested = parse_generate_request(context.parameters)
     failed = False
     total = len(requested)
-    await context.report(10)
+    await context.report(_START_PERCENT)
     for index, (section_number, expected_revision) in enumerate(requested):
         await context.check_cancelled()
         outcome = await generate_one_section(
             context,
             section_number,
             expected_revision,
+            active,
         )
-        if outcome == GenerationAttemptStatus.FAILED.value:
+        if outcome == _FAILED:
             failed = True
         if total:
-            await context.report(10 + int(80 * (index + 1) / total))
+            await context.report(
+                _START_PERCENT + int(_WORK_PERCENT * (index + 1) / total)
+            )
     if failed:
         raise GenerateSectionError
-    await context.report(100)
-
-
-def bind_generate_stores(context: JobContext, session: object, chroma_index: ChromaIndex) -> None:
-    """Attach tenant-scoped stores for one database session."""
-
-    context.evidence = EvidenceIndex(EvidenceChunkRepository(session), chroma_index)  # type: ignore[arg-type]
-    context.generate = SimpleNamespace(
-        sections=M11SectionStore(session),  # type: ignore[arg-type]
-        memory=ConversationMemoryStore(session),  # type: ignore[arg-type]
-        attempts=SectionGenerationAttemptRepository(session),  # type: ignore[arg-type]
-    )
+    await context.report(_DONE_PERCENT)
 
 
 async def run_generate_sections_job(
@@ -602,191 +643,11 @@ async def run_generate_sections_job(
     runtime: DatabaseRuntime,
     chroma_index: ChromaIndex,
 ) -> None:
-    """Load, generate, and save each section without holding SQL across chat."""
+    """Run the drafting pipeline against the database, one transaction per step."""
 
-    if not isinstance(context.gateway, ProviderGateway):
-        raise WorkerServiceError
-    if context.conversation_id is None:
-        raise InvalidJobInputError
-    if _job_mode(context.parameters) == GENERATE_MODE_REWRITE:
-        request = parse_rewrite_request(context.parameters)
-        await context.report(10)
-        await context.check_cancelled()
-        async with runtime.transaction() as session:
-            bind_generate_stores(context, session, chroma_index)
-            outcome = await rewrite_one_section(context, request)
-        if outcome == GenerationAttemptStatus.FAILED.value:
-            raise GenerateSectionError
-        await context.report(100)
-        return
-    requested = parse_generate_request(context.parameters)
-    failed = False
-    total = len(requested)
-    await context.report(10)
-    for index, (section_number, expected_revision) in enumerate(requested):
-        await context.check_cancelled()
-        outcome = await _run_one_section_job(
-            context,
-            runtime,
-            chroma_index,
-            section_number,
-            expected_revision,
-        )
-        if outcome == GenerationAttemptStatus.FAILED.value:
-            failed = True
-        if total:
-            await context.report(10 + int(80 * (index + 1) / total))
-    if failed:
-        raise GenerateSectionError
-    await context.report(100)
+    require_gateway(context)
+    await generate_sections_pipeline(
+        context,
+        TransactionScope(runtime, chroma_index, context),
+    )
 
-
-async def _run_one_section_job(
-    context: JobContext,
-    runtime: DatabaseRuntime,
-    chroma_index: ChromaIndex,
-    section_number: str,
-    expected_revision: int,
-) -> str:
-    settings = WorkerSettings()
-    async with runtime.transaction() as session:
-        bind_generate_stores(context, session, chroma_index)
-        record = await context.generate.sections.get_scoped(  # type: ignore[union-attr]
-            context.organization_id,
-            context.conversation_id,
-            section_number,
-        )
-        if record is None:
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.FAILED.value,
-                error_code=GenerationErrorCode.MISSING_SECTION.value,
-            )
-            return GenerationAttemptStatus.FAILED.value
-        if record.status == M11_SECTION_DONE_STATUS:
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.SKIPPED.value,
-            )
-            return GenerationAttemptStatus.SKIPPED.value
-        if record.current_revision != expected_revision:
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.SKIPPED.value,
-                error_code=GenerationErrorCode.REVISION_CONFLICT.value,
-            )
-            return GenerationAttemptStatus.SKIPPED.value
-        turns = await context.generate.memory.recent(  # type: ignore[union-attr]
-            context.organization_id,
-            context.conversation_id,
-            GENERATE_MEMORY_TURN_LIMIT,
-        )
-        query = record.title
-        if record.instructions.strip():
-            query = f"{record.title}\n{record.instructions}"
-        title = record.title
-        instructions = record.instructions
-        loaded_number = record.section_number
-    try:
-        async with runtime.transaction() as session:
-            bind_generate_stores(context, session, chroma_index)
-            retriever = ConversationRetriever(
-                context.gateway,
-                context.evidence,  # type: ignore[arg-type]
-                settings,
-            )
-            retrieved = await retriever.retrieve(
-                organization_id=context.organization_id,
-                conversation_id=context.conversation_id,
-                query=query,
-                job_id=context.job_id,
-                account_id=context.account_id,
-                k=settings.retrieve_k,
-            )
-        messages = section_generation_messages(
-            section_number=loaded_number,
-            title=title,
-            instructions=instructions,
-            trial_passages=[
-                chunk.text
-                for chunk in retrieved
-                if chunk.source_kind == EVIDENCE_SOURCE_TRIAL_DATA
-            ],
-            evidence=list(retrieved),
-            memory=list(turns),
-        )
-        prompt = "\n\n".join(message.content for message in messages)
-        completed = await context.gateway.complete(
-            ChatRequest(
-                messages=messages,
-                model=settings.chat_model,
-                organization_id=context.organization_id,
-                conversation_id=context.conversation_id,
-                job_id=context.job_id,
-                account_id=context.account_id,
-                idempotency_key=(
-                    f"{context.job_id}:{context.attempt}:generate:{section_number}"
-                ),
-                thinking=False,
-            )
-        )
-    except _PROVIDER_ERRORS:
-        async with runtime.transaction() as session:
-            bind_generate_stores(context, session, chroma_index)
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.FAILED.value,
-                error_code=GenerationErrorCode.PROVIDER_FAILED.value,
-            )
-        return GenerationAttemptStatus.FAILED.value
-    allowed = {chunk.id for chunk in retrieved}
-    cleaned = apply_citations(completed.text, allowed).strip()
-    if not cleaned:
-        async with runtime.transaction() as session:
-            bind_generate_stores(context, session, chroma_index)
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.FAILED.value,
-                model=completed.model,
-                prompt=prompt,
-                error_code=GenerationErrorCode.EMPTY_OUTPUT.value,
-            )
-        return GenerationAttemptStatus.FAILED.value
-    async with runtime.transaction() as session:
-        bind_generate_stores(context, session, chroma_index)
-        saved = await context.generate.sections.revise_draft(  # type: ignore[union-attr]
-            context.organization_id,
-            context.conversation_id,
-            section_number,
-            expected_revision=expected_revision,
-            content=cleaned,
-            author_account_id=context.account_id,
-            now=datetime.now(UTC),
-            action=M11_REVISION_ACTION_GENERATED,
-        )
-        if not saved:
-            await _record(
-                context,
-                section_number,
-                GenerationAttemptStatus.FAILED.value,
-                model=completed.model,
-                prompt=prompt,
-                content=cleaned,
-                error_code=GenerationErrorCode.REVISION_CONFLICT.value,
-            )
-            return GenerationAttemptStatus.FAILED.value
-        await _record(
-            context,
-            section_number,
-            GenerationAttemptStatus.SUCCEEDED.value,
-            model=completed.model,
-            prompt=prompt,
-            content=cleaned,
-            citation_ids=[str(chunk_id) for chunk_id in parse_cite_ids(cleaned)],
-        )
-    return GenerationAttemptStatus.SUCCEEDED.value
