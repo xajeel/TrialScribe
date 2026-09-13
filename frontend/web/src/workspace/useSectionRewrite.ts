@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  GENERATE_JOB_POLL_MS,
   GENERATE_SECTIONS_JOB_KIND,
   createJob,
-  getJob,
   listRewriteOptions,
 } from "../api/jobs";
 import { reviseM11Section } from "../api/m11Sections";
@@ -15,6 +13,7 @@ import type {
 } from "../api/types";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import { isJobInFlight } from "./useGenerationJob";
+import { useJobRun } from "./useJobRun";
 
 const START_FAILURE = "Could not start the rewrite. Please try again.";
 const APPLY_FAILURE = "Could not apply the rewrite. Please try again.";
@@ -86,35 +85,18 @@ export function useSectionRewrite({
   sectionRef.current = section;
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
-  const jobRef = useRef<JobRecord | null>(null);
-  jobRef.current = job;
-  const intervalRef = useRef<number | null>(null);
-  const generationRef = useRef(0);
   const sourceRevisionRef = useRef<number | null>(null);
-
-  const stopPolling = useCallback(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
+  const run = useJobRun(fetcher);
 
   const reset = useCallback(() => {
-    stopPolling();
-    generationRef.current += 1;
-    jobRef.current = null;
+    run.claim();
+    run.forget();
     sourceRevisionRef.current = null;
     setJob(null);
     setOptions([]);
     setError(null);
     setPending(false);
-  }, [stopPolling]);
-
-  useEffect(() => {
-    return () => {
-      stopPolling();
-    };
-  }, [stopPolling]);
+  }, [run]);
 
   useEffect(() => {
     reset();
@@ -138,13 +120,12 @@ export function useSectionRewrite({
         current === null ||
         current.status === "done" ||
         pending ||
-        isJobInFlight(jobRef.current?.status)
+        isJobInFlight(run.latest()?.status)
       ) {
         return;
       }
-      stopPolling();
-      const expected = generationRef.current + 1;
-      generationRef.current = expected;
+      const token = run.claim();
+      const orgId = organizationId;
       sourceRevisionRef.current = current.current_revision;
       setPending(true);
       setError(null);
@@ -152,65 +133,41 @@ export function useSectionRewrite({
       try {
         const created = await createJob(
           fetcherRef.current,
-          organizationId,
+          orgId,
           GENERATE_SECTIONS_JOB_KIND,
           conversationId,
           rewriteParameters(current, input),
         );
-        if (generationRef.current !== expected) {
+        if (!run.isCurrent(token)) {
           return;
         }
-        jobRef.current = created;
+        run.adopt(created);
         setJob(created);
-        const orgId = organizationId;
-
-        const refresh = async (): Promise<JobRecord | null> => {
-          const next = await getJob(fetcherRef.current, orgId, created.id);
-          if (generationRef.current !== expected) {
-            return null;
-          }
-          jobRef.current = next;
-          setJob(next);
-          if (isJobInFlight(next.status)) {
-            return next;
-          }
-          stopPolling();
-          if (next.status === "succeeded") {
-            const page = await listRewriteOptions(
-              fetcherRef.current,
-              orgId,
-              next.id,
-            );
-            if (generationRef.current === expected) {
+        await run.follow(token, orgId, created.id, {
+          onUpdate: (next) => {
+            setJob(next);
+          },
+          onSucceeded: async (next) => {
+            const page = await listRewriteOptions(fetcherRef.current, orgId, next.id);
+            if (run.isCurrent(token)) {
               setOptions(page.items);
             }
-          } else {
+          },
+          onFailed: () => {
             setError(JOB_FAILURE);
-          }
-          return next;
-        };
-
-        const next = await refresh();
-        if (
-          generationRef.current === expected &&
-          next !== null &&
-          isJobInFlight(next.status)
-        ) {
-          intervalRef.current = window.setInterval(() => {
-            void refresh().catch(() => undefined);
-          }, GENERATE_JOB_POLL_MS);
-        }
+          },
+        });
       } catch {
-        if (generationRef.current === expected) {
+        if (run.isCurrent(token)) {
           setError(START_FAILURE);
         }
       } finally {
-        if (generationRef.current === expected) {
+        if (run.isCurrent(token)) {
           setPending(false);
         }
       }
     },
-    [conversationId, enabled, organizationId, pending, stopPolling],
+    [conversationId, enabled, organizationId, pending, run],
   );
 
   const useOption = useCallback(
