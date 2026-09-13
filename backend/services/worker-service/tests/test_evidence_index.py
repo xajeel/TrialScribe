@@ -35,6 +35,11 @@ class MemoryChunks:
         self.rows[chunk.id] = chunk
         return chunk
 
+    async def add_many(self, chunks: Any) -> list[EvidenceChunk]:
+        for chunk in chunks:
+            self.rows[chunk.id] = chunk
+        return list(chunks)
+
     async def get_scoped(
         self,
         organization_id: UUID,
