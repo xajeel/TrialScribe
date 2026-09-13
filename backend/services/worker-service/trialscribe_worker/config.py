@@ -1,5 +1,6 @@
 """Environment-backed worker-service configuration."""
 
+from functools import lru_cache
 from typing import Any, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -164,3 +165,16 @@ class WorkerSecretSettings(BaseSettings):
         """Return the Chroma HTTP origin used to build the async client."""
 
         return self.chroma_url
+
+
+@lru_cache(maxsize=1)
+def worker_settings() -> WorkerSettings:
+    """Return the process-wide worker settings, reading the environment once.
+
+    Pipelines ask for settings inside loops that run per section, per document
+    batch, and per research hit. Re-reading and re-validating every environment
+    variable on each of those calls costs real time and lets a mid-job change to
+    the environment alter how one job behaves halfway through.
+    """
+
+    return WorkerSettings()
