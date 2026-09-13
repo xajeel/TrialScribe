@@ -109,6 +109,7 @@ def test_runtime_construction_and_vector_registration(
     assert engine_arguments == {
         "url": settings.connection_url(),
         "pool_pre_ping": True,
+        **settings.pool_options(),
     }
     assert listener_arguments == [(engine.sync_engine, "connect", runtime_module._register_vector)]
 

@@ -1,39 +1,13 @@
 """Tenant-safe SQLAlchemy persistence for conversation documents."""
 
-import base64
-import json
-from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from trialscribe_ai.models.document import Document
-from trialscribe_ai.utils.exceptions import InvalidCursorError
-
-
-def _encode_cursor(created_at: datetime, document_id: UUID) -> str:
-    payload = json.dumps(
-        {"created_at": created_at.isoformat(), "id": str(document_id)},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
-        if set(payload) != {"created_at", "id"}:
-            raise ValueError
-        created_at = datetime.fromisoformat(payload["created_at"])
-        if created_at.tzinfo is None:
-            raise ValueError
-        return created_at, UUID(payload["id"])
-    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        raise InvalidCursorError from None
+from trialscribe_ai.repositories import cursor as cursor_codec
 
 
 class DocumentRepository:
@@ -78,14 +52,16 @@ class DocumentRepository:
             )
         )
         if cursor is not None:
-            created_at, document_id = _decode_cursor(cursor)
+            created_at, document_id = cursor_codec.decode_cursor(
+                "created_at",
+                cursor,
+            )
             statement = statement.where(
-                or_(
-                    Document.created_at < created_at,
-                    and_(
-                        Document.created_at == created_at,
-                        Document.id < document_id,
-                    ),
+                cursor_codec.before(
+                    Document.created_at,
+                    Document.id,
+                    created_at,
+                    document_id,
                 )
             )
         result = list(
@@ -101,7 +77,11 @@ class DocumentRepository:
         next_cursor = None
         if has_more and items:
             last = items[-1]
-            next_cursor = _encode_cursor(last.created_at, last.id)
+            next_cursor = cursor_codec.encode_cursor(
+                "created_at",
+                last.created_at,
+                last.id,
+            )
         return items, next_cursor
 
     async def delete(self, document: Document) -> None:

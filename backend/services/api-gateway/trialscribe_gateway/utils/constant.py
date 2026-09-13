@@ -83,3 +83,6 @@ HOP_BY_HOP_HEADERS = frozenset(
         "upgrade",
     }
 )
+
+PROXY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+PUBLIC_AUTH_PATHS = frozenset({"register", "login", "refresh", "logout"})

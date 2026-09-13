@@ -1,8 +1,5 @@
 """Tenant-safe SQLAlchemy persistence for conversations."""
 
-import base64
-import json
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import and_, exists, or_, select
@@ -10,30 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_ai.models.conversation import Conversation
 from trialscribe_ai.models.conversation_access import ConversationAccess
-from trialscribe_ai.utils.exceptions import InvalidCursorError
-
-
-def _encode_cursor(activity_at: datetime, conversation_id: UUID) -> str:
-    payload = json.dumps(
-        {"activity_at": activity_at.isoformat(), "id": str(conversation_id)},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
-        if set(payload) != {"activity_at", "id"}:
-            raise ValueError
-        activity_at = datetime.fromisoformat(payload["activity_at"])
-        if activity_at.tzinfo is None:
-            raise ValueError
-        return activity_at, UUID(payload["id"])
-    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        raise InvalidCursorError from None
+from trialscribe_ai.repositories import cursor as cursor_codec
 
 
 class ConversationRepository:
@@ -96,14 +70,16 @@ class ConversationRepository:
             archive_filter,
         )
         if cursor is not None:
-            activity_at, conversation_id = _decode_cursor(cursor)
+            activity_at, conversation_id = cursor_codec.decode_cursor(
+                "activity_at",
+                cursor,
+            )
             statement = statement.where(
-                or_(
-                    Conversation.last_activity_at < activity_at,
-                    and_(
-                        Conversation.last_activity_at == activity_at,
-                        Conversation.id < conversation_id,
-                    ),
+                cursor_codec.before(
+                    Conversation.last_activity_at,
+                    Conversation.id,
+                    activity_at,
+                    conversation_id,
                 )
             )
         result = list(
@@ -119,7 +95,11 @@ class ConversationRepository:
         next_cursor = None
         if has_more and items:
             last = items[-1]
-            next_cursor = _encode_cursor(last.last_activity_at, last.id)
+            next_cursor = cursor_codec.encode_cursor(
+                "activity_at",
+                last.last_activity_at,
+                last.id,
+            )
         return items, next_cursor
 
     async def flush(self, conversation: Conversation) -> Conversation:

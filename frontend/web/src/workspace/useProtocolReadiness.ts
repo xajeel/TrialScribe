@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  GENERATE_JOB_POLL_MS,
   VALIDATE_READINESS_JOB_KIND,
   createJob,
-  getJob,
   getReadiness,
 } from "../api/jobs";
-import type { JobRecord, ReadinessRecord } from "../api/types";
+import type { ReadinessRecord } from "../api/types";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import {
   readinessViewFromApi,
   type ReadinessView,
 } from "../product/governanceReviewFixtures";
 import { isJobInFlight } from "./useGenerationJob";
+import { useJobRun } from "./useJobRun";
 
 const LOAD_FAILURE = "Could not load protocol readiness.";
 const START_FAILURE = "Could not start the readiness check. Please try again.";
@@ -49,37 +48,16 @@ export function useProtocolReadiness({
 
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
-  const jobRef = useRef<JobRecord | null>(null);
-  const intervalRef = useRef<number | null>(null);
-  const generationRef = useRef(0);
-
-  const stopPolling = useCallback(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
+  const run = useJobRun(fetcher);
 
   useEffect(() => {
-    return () => {
-      stopPolling();
-    };
-  }, [stopPolling]);
-
-  useEffect(() => {
-    stopPolling();
-    jobRef.current = null;
-    generationRef.current += 1;
-    const expected = generationRef.current;
+    run.forget();
+    const token = run.claim();
     setRecord(null);
     setPending(false);
     setError(null);
 
-    if (
-      !enabled ||
-      organizationId === null ||
-      conversationId === null
-    ) {
+    if (!enabled || organizationId === null || conversationId === null) {
       setLoading(false);
       return;
     }
@@ -87,20 +65,20 @@ export function useProtocolReadiness({
     setLoading(true);
     void getReadiness(fetcherRef.current, organizationId, conversationId)
       .then((next) => {
-        if (generationRef.current !== expected) {
+        if (!run.isCurrent(token)) {
           return;
         }
         setRecord(next);
         setLoading(false);
       })
       .catch(() => {
-        if (generationRef.current !== expected) {
+        if (!run.isCurrent(token)) {
           return;
         }
         setError(LOAD_FAILURE);
         setLoading(false);
       });
-  }, [conversationId, enabled, organizationId, reload, stopPolling]);
+  }, [conversationId, enabled, organizationId, reload, run]);
 
   const retry = useCallback(() => {
     setReload((current) => current + 1);
@@ -112,82 +90,54 @@ export function useProtocolReadiness({
       organizationId === null ||
       conversationId === null ||
       pending ||
-      isJobInFlight(jobRef.current?.status)
+      isJobInFlight(run.latest()?.status)
     ) {
       return;
     }
-    stopPolling();
-    const expected = generationRef.current + 1;
-    generationRef.current = expected;
+    const token = run.claim();
+    const orgId = organizationId;
+    const conversation = conversationId;
     setPending(true);
     setError(null);
     try {
       const created = await createJob(
         fetcherRef.current,
-        organizationId,
+        orgId,
         VALIDATE_READINESS_JOB_KIND,
-        conversationId,
+        conversation,
         {},
       );
-      if (generationRef.current !== expected) {
+      if (!run.isCurrent(token)) {
         return;
       }
-      jobRef.current = created;
-      const orgId = organizationId;
-      const conversation = conversationId;
-
-      const refresh = async (): Promise<JobRecord | null> => {
-        const next = await getJob(fetcherRef.current, orgId, created.id);
-        if (generationRef.current !== expected) {
-          return null;
-        }
-        jobRef.current = next;
-        if (isJobInFlight(next.status)) {
-          return next;
-        }
-        stopPolling();
-        if (next.status === "succeeded") {
+      run.adopt(created);
+      const running = await run.follow(token, orgId, created.id, {
+        onSucceeded: async () => {
           const snapshot = await getReadiness(
             fetcherRef.current,
             orgId,
             conversation,
           );
-          if (generationRef.current === expected) {
+          if (run.isCurrent(token)) {
             setRecord(snapshot);
             setPending(false);
           }
-        } else {
+        },
+        onFailed: () => {
           setError(JOB_FAILURE);
           setPending(false);
-        }
-        return next;
-      };
-
-      const next = await refresh();
-      if (
-        generationRef.current === expected &&
-        next !== null &&
-        isJobInFlight(next.status)
-      ) {
-        intervalRef.current = window.setInterval(() => {
-          void refresh().catch(() => undefined);
-        }, GENERATE_JOB_POLL_MS);
-      } else if (generationRef.current === expected) {
+        },
+      });
+      if (!running && run.isCurrent(token)) {
         setPending(false);
       }
     } catch {
-      if (generationRef.current === expected) {
+      if (run.isCurrent(token)) {
         setError(START_FAILURE);
         setPending(false);
       }
     }
-  }, [
-    conversationId,
-    enabled,
-    organizationId,
-    pending,
-    stopPolling,
-  ]);
+  }, [conversationId, enabled, organizationId, pending, run]);
 
   return {
     record,

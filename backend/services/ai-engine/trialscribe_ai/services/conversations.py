@@ -84,15 +84,16 @@ class ConversationService:
             cursor=cursor,
             limit=limit,
         )
+        collaborators = await self._access.list_collaborators_for(
+            [conversation.id for conversation in conversations],
+            organization_id,
+            {
+                conversation.id: conversation.owner_account_id
+                for conversation in conversations
+            },
+        )
         records = [
-            (
-                conversation,
-                await self._access.list_collaborator_ids(
-                    conversation.id,
-                    organization_id,
-                    conversation.owner_account_id,
-                ),
-            )
+            (conversation, collaborators.get(conversation.id, []))
             for conversation in conversations
         ]
         return records, next_cursor

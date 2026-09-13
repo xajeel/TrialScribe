@@ -8,11 +8,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_ai.models.document import Document
-from trialscribe_ai.repositories.documents import (
-    DocumentRepository,
-    _decode_cursor,
-    _encode_cursor,
-)
+from trialscribe_ai.repositories.cursor import decode_cursor, encode_cursor
+from trialscribe_ai.repositories.documents import DocumentRepository
 from trialscribe_ai.utils.exceptions import InvalidCursorError
 
 ORGANIZATION_ID = UUID("21000000-0000-4000-8000-000000000001")
@@ -23,12 +20,12 @@ def test_document_cursor_round_trips_and_rejects_bad_input() -> None:
     created_at = datetime(2026, 7, 24, 8, 30, tzinfo=UTC)
     document_id = uuid4()
 
-    cursor = _encode_cursor(created_at, document_id)
+    cursor = encode_cursor("created_at", created_at, document_id)
 
-    assert _decode_cursor(cursor) == (created_at, document_id)
+    assert decode_cursor("created_at", cursor) == (created_at, document_id)
     assert str(document_id) not in cursor
     with pytest.raises(InvalidCursorError):
-        _decode_cursor("not-a-cursor")
+        decode_cursor("created_at", "not-a-cursor")
 
 
 def test_get_scoped_filters_tenant_and_conversation() -> None:
@@ -77,7 +74,7 @@ def test_document_page_uses_limit_plus_one_and_deterministic_cursor() -> None:
 
     assert items == documents[:2]
     assert cursor is not None
-    assert _decode_cursor(cursor) == (documents[1].created_at, documents[1].id)
+    assert decode_cursor("created_at", cursor) == (documents[1].created_at, documents[1].id)
     statement = session.scalars.await_args.args[0]
     assert statement._limit_clause.value == 3
     assert re.search(r"\bdocuments\.content\b", str(statement)) is None

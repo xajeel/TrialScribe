@@ -9,13 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from trialscribe_ai.models.conversation import Conversation
 from trialscribe_ai.repositories.conversation_messages import (
     ConversationMessageRepository,
-    _decode_cursor as decode_message_cursor,
-    _encode_cursor as encode_message_cursor,
 )
-from trialscribe_ai.repositories.conversations import (
-    ConversationRepository,
-    _decode_cursor as decode_conversation_cursor,
-    _encode_cursor as encode_conversation_cursor,
+from trialscribe_ai.repositories.conversations import ConversationRepository
+from trialscribe_ai.repositories.cursor import (
+    decode_cursor,
+    decode_sequence_cursor as decode_message_cursor,
+    encode_cursor,
+    encode_sequence_cursor as encode_message_cursor,
 )
 from trialscribe_ai.utils.exceptions import InvalidCursorError
 
@@ -27,17 +27,17 @@ def test_cursors_are_opaque_round_trippable_and_strict() -> None:
     activity_at = datetime(2026, 7, 19, 8, 30, tzinfo=UTC)
     conversation_id = uuid4()
 
-    conversation_cursor = encode_conversation_cursor(activity_at, conversation_id)
+    conversation_cursor = encode_cursor("activity_at", activity_at, conversation_id)
     message_cursor = encode_message_cursor(42)
 
-    assert decode_conversation_cursor(conversation_cursor) == (
+    assert decode_cursor("activity_at", conversation_cursor) == (
         activity_at,
         conversation_id,
     )
     assert decode_message_cursor(message_cursor) == 42
     assert str(conversation_id) not in conversation_cursor
     with pytest.raises(InvalidCursorError):
-        decode_conversation_cursor("not-a-cursor")
+        decode_cursor("activity_at", "not-a-cursor")
     with pytest.raises(InvalidCursorError):
         decode_message_cursor("e30")
 
@@ -90,7 +90,7 @@ def test_conversation_page_uses_limit_plus_one_and_deterministic_cursor() -> Non
 
     assert items == conversations[:2]
     assert cursor is not None
-    assert decode_conversation_cursor(cursor) == (
+    assert decode_cursor("activity_at", cursor) == (
         conversations[1].last_activity_at,
         conversations[1].id,
     )

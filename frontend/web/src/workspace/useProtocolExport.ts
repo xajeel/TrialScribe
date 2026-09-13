@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   EXPORT_PROTOCOL_JOB_KIND,
-  GENERATE_JOB_POLL_MS,
   createJob,
   downloadExport,
   exportFileFromApi,
-  getJob,
   listExports,
 } from "../api/jobs";
-import type { ExportRecord, JobRecord } from "../api/types";
+import type { ExportRecord } from "../api/types";
 import type { AuthorizedFetch } from "../auth/AuthContext";
 import type {
   ExportFileView,
@@ -18,6 +16,7 @@ import type {
   ExportStage,
 } from "../product/deliveryAuditReviewFixtures";
 import { isJobInFlight } from "./useGenerationJob";
+import { useJobRun } from "./useJobRun";
 
 const START_FAILURE = "Could not start the export. Please try again.";
 const JOB_FAILURE = "Could not complete the export. Please try again.";
@@ -120,32 +119,17 @@ export function useProtocolExport({
 
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
-  const jobRef = useRef<JobRecord | null>(null);
-  const intervalRef = useRef<number | null>(null);
-  const generationRef = useRef(0);
   const scopeRef = useRef<ExportScope>("done-only");
-
-  const stopPolling = useCallback(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopPolling();
-    };
-  }, [stopPolling]);
+  const run = useJobRun(fetcher);
 
   const back = useCallback(() => {
-    stopPolling();
-    jobRef.current = null;
+    run.stop();
+    run.forget();
     setPanelState("configuration");
     setJobView(null);
     setError(null);
     setPending(false);
-  }, [stopPolling]);
+  }, [run]);
 
   const createAnother = useCallback(() => {
     back();
@@ -158,13 +142,13 @@ export function useProtocolExport({
         organizationId === null ||
         conversationId === null ||
         pending ||
-        isJobInFlight(jobRef.current?.status)
+        isJobInFlight(run.latest()?.status)
       ) {
         return;
       }
-      stopPolling();
-      const expected = generationRef.current + 1;
-      generationRef.current = expected;
+      const token = run.claim();
+      const orgId = organizationId;
+      const conversation = conversationId;
       scopeRef.current = scope;
       setPending(true);
       setError(null);
@@ -173,33 +157,23 @@ export function useProtocolExport({
       try {
         const created = await createJob(
           fetcherRef.current,
-          organizationId,
+          orgId,
           EXPORT_PROTOCOL_JOB_KIND,
-          conversationId,
+          conversation,
           { scope },
         );
-        if (generationRef.current !== expected) {
+        if (!run.isCurrent(token)) {
           return;
         }
-        jobRef.current = created;
-        const orgId = organizationId;
-        const conversation = conversationId;
-
-        const refresh = async (): Promise<JobRecord | null> => {
-          const next = await getJob(fetcherRef.current, orgId, created.id);
-          if (generationRef.current !== expected) {
-            return null;
-          }
-          jobRef.current = next;
-          setJobView(jobViewFrom(next.progress, PLACEHOLDER_FILE, []));
-          if (isJobInFlight(next.status)) {
-            return next;
-          }
-          stopPolling();
-          if (next.status === "succeeded") {
+        run.adopt(created);
+        const running = await run.follow(token, orgId, created.id, {
+          onUpdate: (next) => {
+            setJobView(jobViewFrom(next.progress, PLACEHOLDER_FILE, []));
+          },
+          onSucceeded: async () => {
             const listed = await listExports(fetcherRef.current, orgId, conversation);
-            if (generationRef.current !== expected) {
-              return next;
+            if (!run.isCurrent(token)) {
+              return;
             }
             const { readyFile, recentExports } = filesFromRecords(
               listed.items,
@@ -210,46 +184,36 @@ export function useProtocolExport({
               setError(JOB_FAILURE);
               setPanelState("failed");
               setPending(false);
-              return next;
+              return;
             }
             setJobView(jobViewFrom(100, readyFile, recentExports));
             setPanelState("ready");
             setPending(false);
-          } else {
+          },
+          onFailed: () => {
             setError(JOB_FAILURE);
             setPanelState("failed");
             setPending(false);
-          }
-          return next;
-        };
-
-        const next = await refresh();
-        if (
-          generationRef.current === expected &&
-          next !== null &&
-          isJobInFlight(next.status)
-        ) {
-          intervalRef.current = window.setInterval(() => {
-            void refresh().catch(() => undefined);
-          }, GENERATE_JOB_POLL_MS);
-        } else if (generationRef.current === expected) {
+          },
+        });
+        if (!running && run.isCurrent(token)) {
           setPending(false);
         }
       } catch {
-        if (generationRef.current === expected) {
+        if (run.isCurrent(token)) {
           setError(START_FAILURE);
           setPanelState("failed");
           setPending(false);
         }
       }
     },
-    [conversationId, enabled, organizationId, pending, stopPolling, accountId],
+    [accountId, conversationId, enabled, organizationId, pending, run],
   );
 
   const retry = useCallback(async () => {
-    jobRef.current = null;
+    run.forget();
     await start(scopeRef.current);
-  }, [start]);
+  }, [run, start]);
 
   const download = useCallback(
     async (file: ExportFileView) => {

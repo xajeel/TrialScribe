@@ -1,7 +1,5 @@
 """Append-only SQLAlchemy persistence for conversation messages."""
 
-import base64
-import json
 from datetime import datetime
 from uuid import UUID
 
@@ -9,26 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from trialscribe_ai.models.conversation_message import ConversationMessage
-from trialscribe_ai.utils.exceptions import InvalidCursorError
-
-
-def _encode_cursor(sequence: int) -> str:
-    payload = json.dumps({"sequence": sequence}, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> int:
-    try:
-        padding = "=" * (-len(cursor) % 4)
-        payload = json.loads(base64.b64decode(cursor + padding, altchars=b"-_", validate=True))
-        if set(payload) != {"sequence"}:
-            raise ValueError
-        sequence = payload["sequence"]
-        if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
-            raise ValueError
-        return sequence
-    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        raise InvalidCursorError from None
+from trialscribe_ai.repositories import cursor as cursor_codec
 
 
 class ConversationMessageRepository:
@@ -80,7 +59,7 @@ class ConversationMessageRepository:
         )
         if cursor is not None:
             statement = statement.where(
-                ConversationMessage.sequence > _decode_cursor(cursor)
+                ConversationMessage.sequence > cursor_codec.decode_sequence_cursor(cursor)
             )
         result = list(
             await self._session.scalars(
@@ -91,5 +70,5 @@ class ConversationMessageRepository:
         items = result[:limit]
         next_cursor = None
         if has_more and items:
-            next_cursor = _encode_cursor(items[-1].sequence)
+            next_cursor = cursor_codec.encode_sequence_cursor(items[-1].sequence)
         return items, next_cursor

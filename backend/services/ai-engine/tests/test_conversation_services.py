@@ -95,6 +95,21 @@ class FakeAccessRepository:
     ) -> list[UUID]:
         return sorted(self.grants[conversation_id] - {owner_account_id}, key=str)
 
+    async def list_collaborators_for(
+        self,
+        conversation_ids: list[UUID],
+        _organization_id: UUID,
+        owner_by_conversation: dict[UUID, UUID],
+    ) -> dict[UUID, list[UUID]]:
+        return {
+            conversation_id: sorted(
+                self.grants.get(conversation_id, set())
+                - {owner_by_conversation.get(conversation_id)},
+                key=str,
+            )
+            for conversation_id in conversation_ids
+        }
+
     async def replace_collaborators(
         self,
         conversation_id: UUID,

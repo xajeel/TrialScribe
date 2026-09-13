@@ -1,4 +1,9 @@
-"""Search PubMed and allow-listed websites, then store tenant-scoped passages."""
+"""Search PubMed and allow-listed websites, then store tenant-scoped passages.
+
+One implementation serves both callers. The evidence scope decides whether each
+stored source gets its own short database transaction (production) or writes
+straight into stores the caller already built (tests).
+"""
 
 import hashlib
 from datetime import UTC, datetime
@@ -7,12 +12,22 @@ from uuid import UUID
 
 from trialscribe_db.runtime import DatabaseRuntime
 
-from trialscribe_worker.config import WorkerSettings
+from trialscribe_worker.config import WorkerSettings, worker_settings
+from trialscribe_worker.pipelines.scope import (
+    BoundScope,
+    EvidenceScope,
+    EvidenceTransactionScope,
+    evidence_from,
+    require_gateway,
+)
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.providers.types import EmbeddingRequest
-from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
 from trialscribe_worker.retrieval.chunking import chunk_text
-from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
+from trialscribe_worker.retrieval.chroma_index import (
+    ChromaIndex,
+    ChunkDraft,
+    EvidenceIndex,
+)
 from trialscribe_worker.retrieval.research_types import ResearchHit
 from trialscribe_worker.retrieval.web_allowlist import (
     canonical_url,
@@ -32,6 +47,10 @@ from trialscribe_worker.utils.exceptions import (
     ResearchSourceError,
     WorkerServiceError,
 )
+
+_START_PERCENT = 10
+_WORK_PERCENT = 80
+_DONE_PERCENT = 100
 
 
 def _query(context: JobContext) -> str:
@@ -81,6 +100,58 @@ def _keep(
     return [(identity, url, hit) for identity, (url, hit) in kept.items()]
 
 
+async def _embed_hit(
+    context: JobContext,
+    gateway: ProviderGateway,
+    settings: WorkerSettings,
+    conversation_id: UUID,
+    identity: str,
+    text: str,
+) -> list[ChunkDraft]:
+    """Chunk one retrieved page and embed it in batches, storing nothing yet."""
+
+    chunks = chunk_text(
+        text,
+        settings.chunk_size_chars,
+        settings.chunk_overlap_chars,
+    )
+    if not chunks:
+        return []
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    batch_size = settings.embed_batch_size
+    drafts: list[ChunkDraft] = []
+    for batch_index, start in enumerate(range(0, len(chunks), batch_size)):
+        batch = chunks[start : start + batch_size]
+        embedded = await gateway.embed(
+            EmbeddingRequest(
+                texts=[chunk for _start, _end, chunk in batch],
+                model=settings.embedding_model,
+                organization_id=context.organization_id,
+                conversation_id=conversation_id,
+                job_id=context.job_id,
+                account_id=context.account_id,
+                idempotency_key=(
+                    f"{context.job_id}:{context.attempt}:web:{digest}:{batch_index}"
+                ),
+            )
+        )
+        dimensions = embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS
+        drafts.extend(
+            ChunkDraft(
+                text=chunk,
+                vector=vector,
+                start_char=start_char,
+                end_char=end_char,
+                embedding_model=embedded.model,
+                embedding_dimensions=dimensions,
+            )
+            for (start_char, end_char, chunk), vector in zip(
+                batch, embedded.vectors, strict=True
+            )
+        )
+    return drafts
+
+
 async def _store_hit(
     context: JobContext,
     gateway: ProviderGateway,
@@ -92,157 +163,69 @@ async def _store_hit(
     hit: ResearchHit,
     retrieved_on: datetime,
 ) -> None:
-    text = format_web_passage(
-        title=hit.title,
-        url=url,
-        published_on=hit.published_on,
-        retrieved_on=retrieved_on.date(),
-        body=hit.body,
+    """Replace one source's passages: embed first, then swap in one batch."""
+
+    drafts = await _embed_hit(
+        context,
+        gateway,
+        settings,
+        conversation_id,
+        identity,
+        format_web_passage(
+            title=hit.title,
+            url=url,
+            published_on=hit.published_on,
+            retrieved_on=retrieved_on.date(),
+            body=hit.body,
+        ),
     )
-    chunks = chunk_text(
-        text,
-        settings.chunk_size_chars,
-        settings.chunk_overlap_chars,
-    )
-    if not chunks:
+    if not drafts:
         return
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-    batch_size = settings.embed_batch_size
-    staged: list[tuple[int, int, str, list[float], str, int]] = []
-    for batch_index, start in enumerate(range(0, len(chunks), batch_size)):
-        batch = chunks[start : start + batch_size]
-        embedded = await gateway.embed(
-            EmbeddingRequest(
-                texts=[chunk for _start, _end, chunk in batch],
-                model=settings.embedding_model,
-                organization_id=context.organization_id,
-                conversation_id=conversation_id,
-                job_id=context.job_id,
-                account_id=context.account_id,
-                idempotency_key=f"{context.job_id}:{context.attempt}:web:{digest}:{batch_index}",
-            )
-        )
-        for (start_char, end_char, chunk_text_value), vector in zip(
-            batch, embedded.vectors, strict=True
-        ):
-            staged.append(
-                (
-                    start_char,
-                    end_char,
-                    chunk_text_value,
-                    vector,
-                    embedded.model,
-                    embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS,
-                )
-            )
     await evidence.drop_source(
         organization_id=context.organization_id,
         conversation_id=conversation_id,
         source_kind=EVIDENCE_SOURCE_WEB,
         source_identity=identity,
     )
-    for start_char, end_char, chunk_text_value, vector, model, dimensions in staged:
-        await evidence.put(
-            organization_id=context.organization_id,
-            conversation_id=conversation_id,
-            text=chunk_text_value,
-            vector=vector,
-            source_kind=EVIDENCE_SOURCE_WEB,
-            source_identity=identity,
-            start_char=start_char,
-            end_char=end_char,
-            embedding_model=model,
-            embedding_dimensions=dimensions,
-        )
+    await evidence.put_many(
+        organization_id=context.organization_id,
+        conversation_id=conversation_id,
+        source_kind=EVIDENCE_SOURCE_WEB,
+        source_identity=identity,
+        drafts=drafts,
+    )
 
 
-async def research_web_pipeline(context: JobContext) -> None:
+async def research_web_pipeline(
+    context: JobContext,
+    scope: EvidenceScope | None = None,
+) -> None:
     """Fetch, filter, and store web passages for one conversation query."""
 
-    if context.gateway is None or context.evidence is None or context.research is None:
-        raise WorkerServiceError
-    gateway = context.gateway
-    evidence = context.evidence
-    research = context.research
-    if not isinstance(gateway, ProviderGateway) or not isinstance(evidence, EvidenceIndex):
-        raise WorkerServiceError
-    pubmed = getattr(research, "pubmed", None)
-    web = getattr(research, "web", None)
-    if pubmed is None or web is None:
-        raise WorkerServiceError
+    gateway = require_gateway(context)
+    pubmed, web = _require_research(context)
+    active = scope if scope is not None else BoundScope(evidence_from(context))
     if context.conversation_id is None:
         raise InvalidJobInputError
     conversation_id = context.conversation_id
     query = _query(context)
-    settings = WorkerSettings()
+    settings = worker_settings()
+
     await context.check_cancelled()
-    await context.report(10)
+    await context.report(_START_PERCENT)
     pubmed_hits, pubmed_error = await _search(
         pubmed, query, settings.research_max_results
     )
     await context.check_cancelled()
     web_hits, web_error = await _search(web, query, settings.research_max_results)
+
     kept = _keep(pubmed_hits, web_hits)
     stored = 0
     retrieved_on = datetime.now(UTC)
     total = len(kept)
     for index, (identity, url, hit) in enumerate(kept):
         await context.check_cancelled()
-        await _store_hit(
-            context,
-            gateway,
-            evidence,
-            settings,
-            conversation_id,
-            identity,
-            url,
-            hit,
-            retrieved_on,
-        )
-        stored += 1
-        if total:
-            await context.report(10 + int(80 * (index + 1) / total))
-    if stored == 0 and (pubmed_error is not None or web_error is not None):
-        raise ResearchSourceError
-    await context.report(100)
-
-
-async def run_research_web_job(
-    context: JobContext,
-    runtime: DatabaseRuntime,
-    chroma_index: ChromaIndex,
-    pubmed: object,
-    web: object,
-) -> None:
-    """Fetch libraries first, then commit each URL in its own transaction."""
-
-    if not isinstance(context.gateway, ProviderGateway):
-        raise WorkerServiceError
-    if context.conversation_id is None:
-        raise InvalidJobInputError
-    context.research = SimpleNamespace(pubmed=pubmed, web=web)
-    query = _query(context)
-    settings = WorkerSettings()
-    await context.check_cancelled()
-    await context.report(10)
-    pubmed_hits, pubmed_error = await _search(
-        pubmed, query, settings.research_max_results
-    )
-    await context.check_cancelled()
-    web_hits, web_error = await _search(web, query, settings.research_max_results)
-    kept = _keep(pubmed_hits, web_hits)
-    stored = 0
-    retrieved_on = datetime.now(UTC)
-    total = len(kept)
-    gateway = context.gateway
-    conversation_id = context.conversation_id
-    for index, (identity, url, hit) in enumerate(kept):
-        await context.check_cancelled()
-        async with runtime.transaction() as session:
-            evidence = EvidenceIndex(
-                EvidenceChunkRepository(session),
-                chroma_index,
-            )
+        async with active.open() as evidence:
             await _store_hit(
                 context,
                 gateway,
@@ -256,7 +239,38 @@ async def run_research_web_job(
             )
         stored += 1
         if total:
-            await context.report(10 + int(80 * (index + 1) / total))
+            await context.report(
+                _START_PERCENT + int(_WORK_PERCENT * (index + 1) / total)
+            )
     if stored == 0 and (pubmed_error is not None or web_error is not None):
         raise ResearchSourceError
-    await context.report(100)
+    await context.report(_DONE_PERCENT)
+
+
+async def run_research_web_job(
+    context: JobContext,
+    runtime: DatabaseRuntime,
+    chroma_index: ChromaIndex,
+    pubmed: object,
+    web: object,
+) -> None:
+    """Fetch the libraries first, then commit each source in its own transaction."""
+
+    require_gateway(context)
+    context.research = SimpleNamespace(pubmed=pubmed, web=web)
+    await research_web_pipeline(
+        context,
+        EvidenceTransactionScope(runtime, chroma_index, context),
+    )
+
+
+
+def _require_research(context: JobContext) -> tuple[object, object]:
+    research = context.research
+    if research is None:
+        raise WorkerServiceError
+    pubmed = getattr(research, "pubmed", None)
+    web = getattr(research, "web", None)
+    if pubmed is None or web is None:
+        raise WorkerServiceError
+    return pubmed, web

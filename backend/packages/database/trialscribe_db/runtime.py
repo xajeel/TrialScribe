@@ -51,7 +51,11 @@ class DatabaseRuntime:
 def create_database_runtime(settings: DatabaseSettings) -> DatabaseRuntime:
     """Build a database runtime from validated settings."""
 
-    engine = create_async_engine(settings.connection_url(), pool_pre_ping=True)
+    engine = create_async_engine(
+        settings.connection_url(),
+        pool_pre_ping=True,
+        **settings.pool_options(),
+    )
     event.listen(engine.sync_engine, "connect", _register_vector)
     session_factory = async_sessionmaker(
         engine,
