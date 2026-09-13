@@ -26,3 +26,6 @@ frontend/web/dist/
 .ruff_cache/
 .pytest_cache/
 .agents/
+# Local release backups and load-test output
+backups/
+infra/k6/results/
