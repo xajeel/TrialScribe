@@ -1,4 +1,10 @@
-"""Versioned reverse-proxy routes for backend service boundaries."""
+"""Versioned reverse-proxy routes for backend service boundaries.
+
+Every route does the same three things in the same order: prove who is calling,
+prove what they may reach, then forward the request untouched. Those three steps
+live in `_forward_authenticated` and `_forward_with_organization`; each route
+below only names its upstream and its path.
+"""
 
 from datetime import datetime
 from typing import Annotated
@@ -24,6 +30,8 @@ from trialscribe_gateway.utils.constant import (
     INVALID_ORGANIZATION_DETAIL,
     ORGANIZATION_ACCESS_DENIED_DETAIL,
     ORGANIZATION_ID_HEADER,
+    PROXY_METHODS,
+    PUBLIC_AUTH_PATHS,
 )
 from trialscribe_gateway.utils.enum import ProxyTarget
 from trialscribe_gateway.utils.exceptions import UpstreamUnavailableError
@@ -43,6 +51,17 @@ def get_organization_access_service(
     settings: Annotated[GatewaySettings, Depends(get_settings)],
 ) -> OrganizationAccessService:
     return OrganizationAccessService(client, settings)
+
+
+Token = Annotated[str | None, Depends(get_optional_bearer_token)]
+Verifier = Annotated[AccessTokenVerifier, Depends(get_token_verifier)]
+Now = Annotated[datetime, Depends(get_now)]
+Proxy = Annotated[GatewayProxy, Depends(get_gateway_proxy)]
+Access = Annotated[
+    OrganizationAccessService,
+    Depends(get_organization_access_service),
+]
+OrganizationHeader = Annotated[str | None, Header(alias=ORGANIZATION_ID_HEADER)]
 
 
 async def _required_account_id(
@@ -67,6 +86,12 @@ async def _require_organization_access(
     request: Request,
     access: OrganizationAccessService,
 ) -> UUID:
+    """Confirm the caller still belongs to the organization they named.
+
+    Membership is read from user-service on every protected request rather than
+    trusted from the token, so a revoked membership stops working immediately.
+    """
+
     if token is None:
         raise authentication_error()
     try:
@@ -87,123 +112,34 @@ async def _require_organization_access(
     raise UpstreamUnavailableError
 
 
-@router.api_route(
-    "/v1/auth/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
-async def proxy_auth(
+async def _forward_authenticated(
     request: Request,
-    path: str,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)],
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)],
-    now: Annotated[datetime, Depends(get_now)],
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)],
-) -> Response:
-    account_id = None
-    if not (
-        request.method == "POST"
-        and path in {"register", "login", "refresh", "logout"}
-    ):
-        account_id = await _required_account_id(token, verifier, now)
-    return await proxy.forward(
-        request,
-        ProxyTarget.AUTH,
-        f"/v1/auth/{path}",
-        account_id,
-    )
-
-
-async def _proxy_user_request(
-    request: Request,
+    target: ProxyTarget,
     upstream_path: str,
-    organization_id: UUID | None,
+    *,
     token: str | None,
     verifier: AccessTokenVerifier,
     now: datetime,
     proxy: GatewayProxy,
+    organization_id: UUID | None = None,
 ) -> Response:
+    """Forward on behalf of a proven account, without an organization check."""
+
     account_id = await _required_account_id(token, verifier, now)
     return await proxy.forward(
         request,
-        ProxyTarget.USER,
+        target,
         upstream_path,
         account_id,
         organization_id,
     )
 
 
-@router.api_route(
-    "/v1/organizations",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
-async def proxy_organizations_root(
-    request: Request,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)],
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)],
-    now: Annotated[datetime, Depends(get_now)],
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)],
-) -> Response:
-    return await _proxy_user_request(
-        request,
-        "/v1/organizations",
-        None,
-        token,
-        verifier,
-        now,
-        proxy,
-    )
-
-
-@router.api_route(
-    "/v1/organizations/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
-async def proxy_organizations(
-    request: Request,
-    path: str,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)],
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)],
-    now: Annotated[datetime, Depends(get_now)],
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)],
-) -> Response:
-    return await _proxy_user_request(
-        request,
-        f"/v1/organizations/{path}",
-        _organization_from_path(path),
-        token,
-        verifier,
-        now,
-        proxy,
-    )
-
-
-@router.api_route(
-    "/v1/organization-invitations/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
-async def proxy_organization_invitations(
-    request: Request,
-    path: str,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)],
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)],
-    now: Annotated[datetime, Depends(get_now)],
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)],
-) -> Response:
-    return await _proxy_user_request(
-        request,
-        f"/v1/organization-invitations/{path}",
-        None,
-        token,
-        verifier,
-        now,
-        proxy,
-    )
-
-
-async def _proxy_organization_capability(
+async def _forward_with_organization(
     request: Request,
     target: ProxyTarget,
     upstream_path: str,
+    *,
     organization_header: str | None,
     token: str | None,
     verifier: AccessTokenVerifier,
@@ -211,6 +147,8 @@ async def _proxy_organization_capability(
     access: OrganizationAccessService,
     proxy: GatewayProxy,
 ) -> Response:
+    """Forward only after both the account and its membership are proven."""
+
     account_id = await _required_account_id(token, verifier, now)
     organization_id = await _require_organization_access(
         organization_header,
@@ -227,99 +165,149 @@ async def _proxy_organization_capability(
     )
 
 
-@router.api_route(
-    "/v1/ai/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
+@router.api_route("/v1/auth/{path:path}", methods=PROXY_METHODS)
+async def proxy_auth(
+    request: Request,
+    path: str,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    proxy: Proxy,
+) -> Response:
+    """Forward authentication traffic, leaving the public entry points open."""
+
+    account_id = None
+    if not (request.method == "POST" and path in PUBLIC_AUTH_PATHS):
+        account_id = await _required_account_id(token, verifier, now)
+    return await proxy.forward(request, ProxyTarget.AUTH, f"/v1/auth/{path}", account_id)
+
+
+@router.api_route("/v1/organizations", methods=PROXY_METHODS)
+async def proxy_organizations_root(
+    request: Request,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    proxy: Proxy,
+) -> Response:
+    return await _forward_authenticated(
+        request,
+        ProxyTarget.USER,
+        "/v1/organizations",
+        token=token,
+        verifier=verifier,
+        now=now,
+        proxy=proxy,
+    )
+
+
+@router.api_route("/v1/organizations/{path:path}", methods=PROXY_METHODS)
+async def proxy_organizations(
+    request: Request,
+    path: str,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    proxy: Proxy,
+) -> Response:
+    return await _forward_authenticated(
+        request,
+        ProxyTarget.USER,
+        f"/v1/organizations/{path}",
+        token=token,
+        verifier=verifier,
+        now=now,
+        proxy=proxy,
+        organization_id=_organization_from_path(path),
+    )
+
+
+@router.api_route("/v1/organization-invitations/{path:path}", methods=PROXY_METHODS)
+async def proxy_organization_invitations(
+    request: Request,
+    path: str,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    proxy: Proxy,
+) -> Response:
+    return await _forward_authenticated(
+        request,
+        ProxyTarget.USER,
+        f"/v1/organization-invitations/{path}",
+        token=token,
+        verifier=verifier,
+        now=now,
+        proxy=proxy,
+    )
+
+
+@router.api_route("/v1/ai/{path:path}", methods=PROXY_METHODS)
 async def proxy_ai(
     request: Request,
     path: str,
-    organization_header: Annotated[
-        str | None,
-        Header(alias=ORGANIZATION_ID_HEADER),
-    ] = None,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)] = None,
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)] = None,
-    now: Annotated[datetime, Depends(get_now)] = None,
-    access: Annotated[
-        OrganizationAccessService,
-        Depends(get_organization_access_service),
-    ] = None,
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)] = None,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    access: Access,
+    proxy: Proxy,
+    organization_header: OrganizationHeader = None,
 ) -> Response:
-    return await _proxy_organization_capability(
+    return await _forward_with_organization(
         request,
         ProxyTarget.AI,
         f"/{path}",
-        organization_header,
-        token,
-        verifier,
-        now,
-        access,
-        proxy,
+        organization_header=organization_header,
+        token=token,
+        verifier=verifier,
+        now=now,
+        access=access,
+        proxy=proxy,
     )
 
 
-@router.api_route(
-    "/v1/jobs",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
+@router.api_route("/v1/jobs", methods=PROXY_METHODS)
 async def proxy_jobs_root(
     request: Request,
-    organization_header: Annotated[
-        str | None,
-        Header(alias=ORGANIZATION_ID_HEADER),
-    ] = None,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)] = None,
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)] = None,
-    now: Annotated[datetime, Depends(get_now)] = None,
-    access: Annotated[
-        OrganizationAccessService,
-        Depends(get_organization_access_service),
-    ] = None,
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)] = None,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    access: Access,
+    proxy: Proxy,
+    organization_header: OrganizationHeader = None,
 ) -> Response:
-    return await _proxy_organization_capability(
+    return await _forward_with_organization(
         request,
         ProxyTarget.WORKER,
         "/jobs",
-        organization_header,
-        token,
-        verifier,
-        now,
-        access,
-        proxy,
+        organization_header=organization_header,
+        token=token,
+        verifier=verifier,
+        now=now,
+        access=access,
+        proxy=proxy,
     )
 
 
-@router.api_route(
-    "/v1/jobs/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-)
+@router.api_route("/v1/jobs/{path:path}", methods=PROXY_METHODS)
 async def proxy_jobs(
     request: Request,
     path: str,
-    organization_header: Annotated[
-        str | None,
-        Header(alias=ORGANIZATION_ID_HEADER),
-    ] = None,
-    token: Annotated[str | None, Depends(get_optional_bearer_token)] = None,
-    verifier: Annotated[AccessTokenVerifier, Depends(get_token_verifier)] = None,
-    now: Annotated[datetime, Depends(get_now)] = None,
-    access: Annotated[
-        OrganizationAccessService,
-        Depends(get_organization_access_service),
-    ] = None,
-    proxy: Annotated[GatewayProxy, Depends(get_gateway_proxy)] = None,
+    token: Token,
+    verifier: Verifier,
+    now: Now,
+    access: Access,
+    proxy: Proxy,
+    organization_header: OrganizationHeader = None,
 ) -> Response:
-    return await _proxy_organization_capability(
+    return await _forward_with_organization(
         request,
         ProxyTarget.WORKER,
         f"/jobs/{path}",
-        organization_header,
-        token,
-        verifier,
-        now,
-        access,
-        proxy,
+        organization_header=organization_header,
+        token=token,
+        verifier=verifier,
+        now=now,
+        access=access,
+        proxy=proxy,
     )
