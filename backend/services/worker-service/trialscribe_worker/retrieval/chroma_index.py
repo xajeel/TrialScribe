@@ -1,5 +1,7 @@
 """Chroma collections named for a conversation, hydrated from PostgreSQL."""
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -106,6 +108,19 @@ def _ids_from_query(result: object) -> list[str]:
     return [str(item) for item in first]
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkDraft:
+    """One passage plus its vector, ready to be written with its siblings."""
+
+    text: str
+    vector: list[float]
+    start_char: int
+    end_char: int
+    embedding_model: str
+    embedding_dimensions: int
+    page_number: int | None = None
+
+
 class ChromaIndex:
     """Upsert and query vectors in a per-conversation collection."""
 
@@ -143,6 +158,44 @@ class ChromaIndex:
                     "source_identity": source_identity,
                 }
             ],
+        )
+
+    async def upsert_many(
+        self,
+        chunk_ids: Sequence[UUID],
+        vectors: Sequence[list[float]],
+        organization_id: UUID | None,
+        conversation_id: UUID | None,
+        *,
+        source_kind: str,
+        source_identity: str,
+    ) -> None:
+        """Write a batch of vectors in one call to the conversation's collection.
+
+        Chroma is reached over HTTP. One request per chunk turns indexing a
+        document into hundreds of round trips; the collection accepts the whole
+        batch at once, so send it that way.
+        """
+
+        organization_id, conversation_id = require_scope(
+            organization_id,
+            conversation_id,
+        )
+        if not chunk_ids:
+            return
+        collection = await self._client.get_or_create_collection(
+            collection_name(conversation_id)
+        )
+        metadata = {
+            "organization_id": str(organization_id),
+            "conversation_id": str(conversation_id),
+            "source_kind": source_kind,
+            "source_identity": source_identity,
+        }
+        await collection.upsert(
+            ids=[str(chunk_id) for chunk_id in chunk_ids],
+            embeddings=list(vectors),
+            metadatas=[dict(metadata) for _ in chunk_ids],
         )
 
     async def query(
@@ -253,6 +306,55 @@ class EvidenceIndex:
         await self._chroma.upsert(
             stored.id,
             vector,
+            organization_id,
+            conversation_id,
+            source_kind=source_kind,
+            source_identity=source_identity,
+        )
+        return stored
+
+    async def put_many(
+        self,
+        *,
+        organization_id: UUID | None,
+        conversation_id: UUID | None,
+        source_kind: str,
+        source_identity: str,
+        drafts: Sequence[ChunkDraft],
+    ) -> list[EvidenceChunk]:
+        """Write a batch of passages, then upsert their vectors in one call.
+
+        PostgreSQL stays the source of record for the passage and its
+        provenance; Chroma holds only the vector and the chunk id. Both writes
+        happen once per batch instead of once per passage.
+        """
+
+        organization_id, conversation_id = require_scope(
+            organization_id,
+            conversation_id,
+        )
+        if not drafts:
+            return []
+        chunks = [
+            EvidenceChunk(
+                id=uuid4(),
+                organization_id=organization_id,
+                conversation_id=conversation_id,
+                source_kind=source_kind,
+                source_identity=source_identity,
+                page_number=draft.page_number,
+                start_char=draft.start_char,
+                end_char=draft.end_char,
+                text=draft.text,
+                embedding_model=draft.embedding_model,
+                embedding_dimensions=draft.embedding_dimensions,
+            )
+            for draft in drafts
+        ]
+        stored = await self._chunks.add_many(chunks)
+        await self._chroma.upsert_many(
+            [chunk.id for chunk in stored],
+            [draft.vector for draft in drafts],
             organization_id,
             conversation_id,
             source_kind=source_kind,
