@@ -4,14 +4,18 @@ from uuid import UUID
 
 from trialscribe_db.runtime import DatabaseRuntime
 
-from trialscribe_worker.config import WorkerSettings
+from trialscribe_worker.config import WorkerSettings, worker_settings
 from trialscribe_worker.models.source_document import SourceDocument
 from trialscribe_worker.providers.gateway import ProviderGateway
 from trialscribe_worker.providers.types import EmbeddingRequest
 from trialscribe_worker.repositories.evidence_chunks import EvidenceChunkRepository
 from trialscribe_worker.repositories.source_documents import SourceDocumentRepository
-from trialscribe_worker.retrieval.chunking import chunk_text, page_for_span
-from trialscribe_worker.retrieval.chroma_index import ChromaIndex, EvidenceIndex
+from trialscribe_worker.retrieval.chunking import PageLocator, chunk_text
+from trialscribe_worker.retrieval.chroma_index import (
+    ChromaIndex,
+    ChunkDraft,
+    EvidenceIndex,
+)
 from trialscribe_worker.retrieval.extraction import extract_source
 from trialscribe_worker.services.job_runner import JobContext
 from trialscribe_worker.utils.constant import (
@@ -61,7 +65,7 @@ async def index_document_pipeline(context: JobContext) -> None:
     if context.conversation_id is None:
         raise InvalidJobInputError
     document_id = _document_id(context)
-    settings = WorkerSettings()
+    settings = worker_settings()
 
     try:
         await _index(
@@ -154,6 +158,7 @@ async def _index(
     total = len(chunks)
     done = 0
     batch_size = settings.embed_batch_size
+    locator = PageLocator(extracted.pages)
     for batch_index, start in enumerate(range(0, total, batch_size)):
         await context.check_cancelled()
         batch = chunks[start : start + batch_size]
@@ -168,22 +173,27 @@ async def _index(
                 idempotency_key=f"{context.job_id}:{context.attempt}:embed:{batch_index}",
             )
         )
-        for (start_char, end_char, text), vector in zip(
-            batch, embedded.vectors, strict=True
-        ):
-            await evidence.put(
-                organization_id=context.organization_id,
-                conversation_id=conversation_id,
-                text=text,
-                vector=vector,
-                source_kind=document.kind,
-                source_identity=str(document.id),
-                start_char=start_char,
-                end_char=end_char,
-                embedding_model=embedded.model,
-                embedding_dimensions=embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS,
-                page_number=page_for_span(extracted.pages, start_char, end_char),
-            )
+        dimensions = embedded.dimensions or DEFAULT_EMBEDDING_DIMENSIONS
+        await evidence.put_many(
+            organization_id=context.organization_id,
+            conversation_id=conversation_id,
+            source_kind=document.kind,
+            source_identity=str(document.id),
+            drafts=[
+                ChunkDraft(
+                    text=text,
+                    vector=vector,
+                    start_char=start_char,
+                    end_char=end_char,
+                    embedding_model=embedded.model,
+                    embedding_dimensions=dimensions,
+                    page_number=locator.page_for(start_char),
+                )
+                for (start_char, end_char, text), vector in zip(
+                    batch, embedded.vectors, strict=True
+                )
+            ],
+        )
         done += len(batch)
         await context.report(20 + int(70 * done / total))
 
