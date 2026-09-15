@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Turn a stress campaign's captured metrics into report-ready PNG charts.
 
-Reads the artifacts scripts/seed_stress_corpus.py, the infra/k6/stress.js
-run, scripts/run_fault_scenario.py, and scripts/sample_resources.sh produce,
+Reads the artifacts infra/stress/seed_stress_corpus.py, the infra/stress/stress.js
+run, infra/stress/run_fault_scenario.py, and infra/stress/sample_resources.sh produce,
 plus a queue-drain series read directly from Prometheus (already scraping
 trialscribe_jobs_total per feature 25 — this script does not add new
 instrumentation). Colors follow the validated default palette in the
@@ -11,7 +11,7 @@ pass/fail state, one hue light->dark for ordered magnitude, one axis per
 chart. Run with matplotlib available ephemerally so the pinned stack does
 not gain a permanent plotting dependency:
 
-    uv run --with matplotlib==3.11.2 python scripts/generate_stress_charts.py
+    uv run --with matplotlib==3.11.2 python infra/stress/generate_stress_charts.py
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SURFACE = "#fcfcfb"
 INK_PRIMARY = "#0b0b0b"
@@ -342,7 +342,7 @@ def chart_circuit_breaker(fault_scenario: dict, out_path: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    results_dir = REPO_ROOT / "infra" / "k6" / "results"
+    results_dir = REPO_ROOT / "infra" / "stress" / "results"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed-summary", default=str(results_dir / "seed-summary.json"))
     parser.add_argument("--k6-summary", default=str(results_dir / "stress-summary.json"))

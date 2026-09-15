@@ -14,11 +14,11 @@ providers/fake.py); no real provider is ever called.
 
 Requires a running `trialscribe-release` Compose project (see scripts.sh
 release up) and a seeded account with at least one conversation — the output
-of scripts/seed_stress_corpus.py fits directly:
+of infra/stress/seed_stress_corpus.py fits directly:
 
-    uv run --frozen --package trialscribe-worker python scripts/run_fault_scenario.py \\
-      --seed-summary infra/k6/results/seed-summary.json \\
-      --out infra/k6/results/fault-scenario.json
+    uv run --frozen --package trialscribe-worker python infra/stress/run_fault_scenario.py \\
+      --seed-summary infra/stress/results/seed-summary.json \\
+      --out infra/stress/results/fault-scenario.json
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 HTTP_TIMEOUT_SECONDS = 15.0
 JOB_POLL_SECONDS = 1.0
 JOB_POLL_TIMEOUT_SECONDS = 20.0
@@ -109,7 +109,7 @@ class ComposeProject:
     def recreate_worker(self, *, with_fault: bool, extra_env: dict[str, str]) -> None:
         files = self.base_files
         if with_fault:
-            files = (*files, "infra/release/fault.yml")
+            files = (*files, "infra/stress/fault.yml")
         environment = os.environ.copy()
         environment.update(extra_env)
         result = subprocess.run(
@@ -240,14 +240,14 @@ def prometheus_query_range(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=None)
-    parser.add_argument("--seed-summary", default=str(REPO_ROOT / "infra" / "k6" / "results" / "seed-summary.json"))
+    parser.add_argument("--seed-summary", default=str(REPO_ROOT / "infra" / "stress" / "results" / "seed-summary.json"))
     parser.add_argument("--project-name", default="trialscribe-release")
     parser.add_argument("--jobs-per-phase", type=int, default=10)
     parser.add_argument("--fault-delay-seconds", default="0.2")
     parser.add_argument("--fault-error", default="rate_limited", choices=("timeout", "rate_limited", "error"))
     parser.add_argument(
         "--out",
-        default=str(REPO_ROOT / "infra" / "k6" / "results" / "fault-scenario.json"),
+        default=str(REPO_ROOT / "infra" / "stress" / "results" / "fault-scenario.json"),
     )
     return parser.parse_args()
 

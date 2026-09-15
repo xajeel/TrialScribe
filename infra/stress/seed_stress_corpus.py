@@ -19,8 +19,8 @@ generator host standing in for many accounts:
       --profile infrastructure --profile release up -d --wait
 
     uv run --frozen --package trialscribe-worker \\
-      python scripts/seed_stress_corpus.py --accounts 150 --conversations-per-org 4 \\
-      --documents-per-conversation 3 --out infra/k6/results/seed-summary.json
+      python infra/stress/seed_stress_corpus.py --accounts 150 --conversations-per-org 4 \\
+      --documents-per-conversation 3 --out infra/stress/results/seed-summary.json
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 HTTP_TIMEOUT_SECONDS = 40.0
 MIN_AVAILABLE_MEMORY_MB = 1536
 MEMORY_CHECK_EVERY = 20
@@ -400,7 +400,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--memory-floor-mb", type=float, default=MIN_AVAILABLE_MEMORY_MB)
     parser.add_argument(
         "--out",
-        default=str(REPO_ROOT / "infra" / "k6" / "results" / "seed-summary.json"),
+        default=str(REPO_ROOT / "infra" / "stress" / "results" / "seed-summary.json"),
     )
     return parser.parse_args()
 

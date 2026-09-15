@@ -7,7 +7,7 @@ and revocable refresh sessions, CSRF-protected refresh cookies, and Redis login 
 Organization invitations, memberships, and roles remain owned by the organization-RBAC
 feature so one identity can join multiple organizations.
 
-See [`docs-src/auth-service.md`](../../../docs-src/auth-service.md) for a plain-language explanation
+See [`docs/src/auth-service.md`](../../../docs/src/auth-service.md) for a plain-language explanation
 of the JWT, refresh, CSRF, PostgreSQL, Redis, and logout flows.
 
 From `backend/`, run it directly with:

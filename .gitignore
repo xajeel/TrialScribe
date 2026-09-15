@@ -27,6 +27,7 @@ frontend/web/dist/
 
 # k6 load summaries
 /infra/k6/results/
+/infra/stress/results/
 
 # Tooling caches
 .ruff_cache/

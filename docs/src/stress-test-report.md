@@ -18,26 +18,26 @@ kind of finding a stress campaign exists to surface.
 
 ## What was built
 
-- `scripts/seed_stress_corpus.py` — seeds a scaled-down synthetic corpus (accounts,
+- `infra/stress/seed_stress_corpus.py` — seeds a scaled-down synthetic corpus (accounts,
   organizations, conversations, documents) through the real gateway HTTP API, so
   every document goes through the worker's existing bulk pipeline
   (`trialscribe_worker.pipelines.index_document`, which already batches through
   `EvidenceChunkRepository.add_many` and `ChromaIndex.upsert_many` — this script
   does not reimplement that logic, only drives it).
-- `infra/k6/stress.js` — k6 spike (ramping-VU) and soak (constant-VU) scenarios
+- `infra/stress/stress.js` — k6 spike (ramping-VU) and soak (constant-VU) scenarios
   against gateway-authenticated endpoints: auth, conversation listing, the M11
   section catalog, document listing, and probe-job creation plus status polling.
   Extends the existing `infra/k6/release.js` pattern.
-- `infra/release/fault.yml` — Compose overlay that injects a configurable fault
+- `infra/stress/fault.yml` — Compose overlay that injects a configurable fault
   (delay / timeout / rate-limit / error) into the fake chat provider on the `jobs`
   and `worker` services, for exercising retries and circuit breaking safely.
-- `scripts/run_fault_scenario.py` — drives `provider_probe` jobs (an existing job
+- `infra/stress/run_fault_scenario.py` — drives `provider_probe` jobs (an existing job
   kind built for exactly this) through a baseline → faulted → recovery sequence and
   reads circuit-breaker state from Prometheus.
-- `scripts/sample_resources.sh` — samples `docker stats` and host available memory
+- `infra/stress/sample_resources.sh` — samples `docker stats` and host available memory
   on an interval, writing a CSV for the resource charts and for the abort-safety
   rule.
-- `scripts/generate_stress_charts.py` — turns the captured k6 summary, Prometheus
+- `infra/stress/generate_stress_charts.py` — turns the captured k6 summary, Prometheus
   queries, and resource CSV into the PNG charts below.
 - Small application change, in the same spirit as the rest of the fake provider:
   `backend/services/worker-service/trialscribe_worker/config.py`,
@@ -129,7 +129,7 @@ capacity numbers can cite it as safe at scale** — see Recommendations.
 ### k6 spike + soak load
 
 `docs/assets/stress-latency-percentiles.png` and `stress-check-pass-rates.png`.
-Full k6 summary: `infra/k6/results/stress-summary.json`.
+Full k6 summary: `infra/stress/results/stress-summary.json`.
 
 - **2,151/2,151 checks passed (100%)** across `live`, `me`, `conversations`, `m11
   catalog`, `documents`, `probe job`, and `job status` — including while the
@@ -164,7 +164,7 @@ embed, store, and search through one background job) is the right vehicle to dri
 it. Two issues surfaced while running it live, both honestly reported rather than
 worked around:
 
-1. **First attempt targeted the wrong container.** `infra/release/fault.yml`
+1. **First attempt targeted the wrong container.** `infra/stress/fault.yml`
    initially set the fault environment only on the `worker` service, but `worker`
    is only the FastAPI health boundary — the actual job execution
    (`trialscribe_worker.runtime.main`, which builds the provider gateway from its
@@ -210,13 +210,13 @@ docker compose --env-file .env -p trialscribe-release \
 
 # Seed the corpus (rerun with a fresh --out each time; two batches were used here
 # only because the first hit the trial_data bug above — one batch is enough now):
-uv run --frozen --package trialscribe-worker python scripts/seed_stress_corpus.py \
+uv run --frozen --package trialscribe-worker python infra/stress/seed_stress_corpus.py \
   --accounts 180 --conversations-per-org 4 --documents-per-conversation 3 \
   --min-doc-chars 6000 --max-doc-chars 9000 --concurrency 4 \
-  --out infra/k6/results/seed-summary.json
+  --out infra/stress/results/seed-summary.json
 
 # Resource sampling (run in the background across the whole campaign):
-scripts/sample_resources.sh trialscribe-release infra/k6/results/resource-samples.csv \
+infra/stress/sample_resources.sh trialscribe-release infra/stress/results/resource-samples.csv \
   /tmp/stop-sampler 5
 
 # Spike + soak load, using the seeded sample tenant for realistic list sizes:
@@ -226,22 +226,22 @@ docker run --rm --network host \
   -e SEED_PASSWORD=<sample_account.password> \
   -e SEED_ORGANIZATION_ID=<sample_account.organization_id> \
   -e SEED_CONVERSATION_ID=<sample_account.conversation_ids[0]> \
-  -v "$(pwd)/infra/k6/stress.js:/scripts/stress.js:ro" \
+  -v "$(pwd)/infra/stress/stress.js:/scripts/stress.js:ro" \
   -v "$(pwd)/infra/k6/results:/results" \
   grafana/k6:2.2.0 run --summary-export /results/stress-summary.json \
   --summary-trend-stats "avg,min,med,max,p(50),p(90),p(95),p(99)" /scripts/stress.js
 
 # Fault injection (best run before bulk seeding, per the finding above):
-uv run --frozen --package trialscribe-worker python scripts/run_fault_scenario.py \
-  --seed-summary infra/k6/results/seed-summary.json \
-  --jobs-per-phase 8 --out infra/k6/results/fault-scenario.json
+uv run --frozen --package trialscribe-worker python infra/stress/run_fault_scenario.py \
+  --seed-summary infra/stress/results/seed-summary.json \
+  --jobs-per-phase 8 --out infra/stress/results/fault-scenario.json
 
 # Charts:
-uv run --with matplotlib==3.11.2 python scripts/generate_stress_charts.py \
-  --seed-summary infra/k6/results/seed-summary.json \
-  --k6-summary infra/k6/results/stress-summary.json \
-  --fault-scenario infra/k6/results/fault-scenario.json \
-  --resource-csv infra/k6/results/resource-samples.csv \
+uv run --with matplotlib==3.11.2 python infra/stress/generate_stress_charts.py \
+  --seed-summary infra/stress/results/seed-summary.json \
+  --k6-summary infra/stress/results/stress-summary.json \
+  --fault-scenario infra/stress/results/fault-scenario.json \
+  --resource-csv infra/stress/results/resource-samples.csv \
   --out-dir docs/assets
 
 touch /tmp/stop-sampler   # stop the resource sampler
@@ -269,14 +269,14 @@ touch /tmp/stop-sampler   # stop the resource sampler
    during, bulk seeding) to get a clean circuit-breaker demonstration, then repeat
    it once more under background load to see whether it still opens/recovers
    cleanly with a large job backlog competing for the same worker capacity.
-5. Extend `scripts/seed_stress_corpus.py` to support multi-member organizations via
+5. Extend `infra/stress/seed_stress_corpus.py` to support multi-member organizations via
    the existing invitation flow, so the seeded corpus also exercises RBAC-scoped
    listing at scale, not just single-owner organizations.
 
 ## Caveats and aborts
 
 - **Two seed-script bugs were found and fixed live during this run** (both already
-  reflected in `scripts/seed_stress_corpus.py`): the `trial_data` JSON-content bug
+  reflected in `infra/stress/seed_stress_corpus.py`): the `trial_data` JSON-content bug
   above, and an unhandled-timeout crash (a `TimeoutError` raised by `urlopen` while
   reading a slow response was not caught alongside `urllib.error.URLError`, so one
   slow request could crash the whole batch; fixed by catching

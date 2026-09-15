@@ -4,7 +4,7 @@
 # operator (human or agent) has a live trail to check against the "abort if
 # available memory drops too low" rule in the stress-testing policy.
 #
-# Usage: scripts/sample_resources.sh <project-name> <out-csv> <stop-file> [interval-seconds]
+# Usage: infra/stress/sample_resources.sh <project-name> <out-csv> <stop-file> [interval-seconds]
 # Write anything to <stop-file> to end the loop on its next tick.
 set -euo pipefail
 

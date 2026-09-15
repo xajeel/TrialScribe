@@ -10,7 +10,7 @@
 # is recreated alongside `jobs` so the two stay on the same configuration.
 # Recreate both with this file applied, run the scenario, then recreate them
 # again without this file to go back to normal. See
-# scripts/run_fault_scenario.py for the exact sequence.
+# infra/stress/run_fault_scenario.py for the exact sequence.
 services:
   jobs:
     environment:

@@ -74,7 +74,7 @@ root-cause follow-up rather than smoothed over. Two real bugs were found and fix
 the run (an upload content-validation bug and an unhandled-timeout crash in the seed script).
 
 Full methodology, every chart, exact reproduction commands, and the capacity-ceiling analysis:
-[docs-src/stress-test-report.md](docs-src/stress-test-report.md), or the rendered version at
+[docs/src/stress-test-report.md](docs/src/stress-test-report.md), or the rendered version at
 [docs/pages/stress-test.html](docs/pages/stress-test.html) on the documentation site.
 
 ## Documentation
@@ -83,10 +83,10 @@ The full documentation site — architecture, operations, service deep dives, an
 rendered for reading rather than raw markdown — is published via GitHub Pages from
 [`docs/`](docs/index.html).
 
-- [INFO.md](INFO.md) — local setup, environment configuration, and every command to run,
+- [docs/src/info.md](docs/src/info.md) — local setup, environment configuration, and every command to run,
   test, and release the platform.
-- [docs-src/architecture.md](docs-src/architecture.md) — full system design and roadmap.
-- [docs-src/operations.md](docs-src/operations.md) — operational runbook for the Compose release profile.
-- [docs-src/api-gateway.md](docs-src/api-gateway.md), [docs-src/auth-service.md](docs-src/auth-service.md),
-  [docs-src/organization-rbac.md](docs-src/organization-rbac.md),
-  [docs-src/conversation-workspaces.md](docs-src/conversation-workspaces.md) — service-level deep dives.
+- [docs/src/architecture.md](docs/src/architecture.md) — full system design and roadmap.
+- [docs/src/operations.md](docs/src/operations.md) — operational runbook for the Compose release profile.
+- [docs/src/api-gateway.md](docs/src/api-gateway.md), [docs/src/auth-service.md](docs/src/auth-service.md),
+  [docs/src/organization-rbac.md](docs/src/organization-rbac.md),
+  [docs/src/conversation-workspaces.md](docs/src/conversation-workspaces.md) — service-level deep dives.
