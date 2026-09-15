@@ -96,4 +96,5 @@ rendered for reading rather than raw markdown — is published via GitHub Pages 
 - [docs/src/operations.md](docs/src/operations.md) — operational runbook for the Compose release profile.
 - [docs/src/api-gateway.md](docs/src/api-gateway.md), [docs/src/auth-service.md](docs/src/auth-service.md),
   [docs/src/organization-rbac.md](docs/src/organization-rbac.md),
-  [docs/src/conversation-workspaces.md](docs/src/conversation-workspaces.md) — service-level deep dives.
+  [docs/src/conversation-workspaces.md](docs/src/conversation-workspaces.md),
+  [docs/src/worker-service.md](docs/src/worker-service.md) — service-level deep dives.
