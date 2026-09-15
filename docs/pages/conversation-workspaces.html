@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation Workspaces — TrialScribe Docs</title>
+<meta name="description" content="The durable memory boundary of the TrialScribe AI Engine: conversations, collaborators, archiving, and cursor-based pagination.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html" aria-current="page">Conversation Workspaces</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Service deep dive</p>
+      <h1>Conversation Workspaces</h1>
+      <p class="lede">
+        Conversation workspaces are the durable memory boundary of the TrialScribe AI Engine.
+        A workspace has a title, an owning account, one organization, an archive state,
+        selected collaborators, and an ordered history of user and assistant messages.
+      </p>
+
+      <p>The important distinction is between product memory and workflow state:</p>
+      <ul>
+        <li>PostgreSQL conversation and message rows are product memory. Users can list and read them, and they survive logout, service restart, and PostgreSQL restart.</li>
+        <li>A future LangGraph checkpoint may remember where one AI execution paused. It can reference a conversation, but it does not replace the conversation's visible message history.</li>
+        <li>Redis is for temporary coordination and future job progress. It is not the source of truth for conversation history.</li>
+      </ul>
+      <p>
+        The existing process-local <code>/sessions</code> endpoints are transitional. Later
+        document ingestion, M11 section workspaces, and generation jobs attach to the durable
+        conversation UUID instead of depending on a session dictionary that expires with one AI
+        Engine process.
+      </p>
+
+      <h2 id="request-flow">Request flow</h2>
+      <p>Clients call the public API gateway, not the AI Engine directly:</p>
+      <pre class="diagram"><code>Browser
+  Authorization: Bearer &lt;access token&gt;
+  X-Organization-ID: &lt;selected organization&gt;
+             │
+             ▼
+API gateway verifies token and current membership
+             │
+             ▼
+AI Engine receives trusted account + organization IDs
+             │
+             ▼
+PostgreSQL filters conversation, access, and message rows by organization</code></pre>
+      <p>
+        For example, public <code>POST /v1/ai/conversations</code> becomes internal
+        <code>POST /conversations</code>. The gateway removes any browser-supplied internal
+        identity headers and writes verified <code>X-TrialScribe-Account-ID</code> and
+        <code>X-TrialScribe-Organization-ID</code> values itself. Those internal headers are
+        deployment contracts between services, not a public authentication mechanism.
+      </p>
+
+      <h2 id="permissions">Permissions</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Action</th><th>Creator</th><th>Selected collaborator</th><th>Unlisted organization member</th></tr></thead>
+          <tbody>
+            <tr><td>List and open</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+            <tr><td>Read ordered messages</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+            <tr><td>Append a user message</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+            <tr><td>Rename</td><td>Yes</td><td>No</td><td>No</td></tr>
+            <tr><td>Archive or restore</td><td>Yes</td><td>No</td><td>No</td></tr>
+            <tr><td>Replace collaborators</td><td>Yes</td><td>No</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Only current members of the conversation's organization can be selected. Removing a
+        person's organization membership cascades its conversation access grants immediately.
+        Unknown, cross-organization, and unshared conversations all return the same
+        <code>404</code> response so callers cannot discover private workspace IDs.
+      </p>
+
+      <h2 id="archive-behavior">Archive behavior</h2>
+      <p>
+        <code>DELETE</code> archives rather than permanently deleting. Archived conversations
+        and messages remain in PostgreSQL, disappear from the default active list, and reject
+        new messages until the creator restores them. Archiving and restoring are idempotent:
+        repeating either operation leaves the workspace in the requested state.
+      </p>
+      <p>
+        There is no public hard-delete endpoint in this feature. This prevents accidental loss
+        and lets future documents, sections, evidence, and jobs safely reference a conversation.
+      </p>
+
+      <h2 id="message-ordering-and-pagination">Message ordering and pagination</h2>
+      <p>
+        Messages are append-only. Public callers submit only <code>content</code>, the API
+        always stores that message as <code>user</code>, so a browser cannot forge an assistant
+        response. Future AI orchestration uses an internal service method to append
+        <code>assistant</code> messages with no user author ID.
+      </p>
+      <p>
+        Appending locks the conversation row inside one database transaction, allocates the
+        next positive sequence number, and updates <code>last_activity_at</code>. This gives
+        concurrent writes one unambiguous order. Message content cannot be updated or
+        individually deleted.
+      </p>
+      <p>
+        Conversation lists use newest activity first; message lists use sequence order from
+        oldest to newest. Both return an opaque <code>next_cursor</code>:
+      </p>
+      <pre><code>{
+  "items": [],
+  "next_cursor": "opaque-value-or-null"
+}</code></pre>
+      <p>
+        Pass that cursor back unchanged. Clients must not decode or construct it. Page size
+        defaults to 20 and is limited to 1–100.
+      </p>
+
+      <h2 id="public-endpoints">Public endpoints</h2>
+      <p>All paths below are gateway paths and require <code>Authorization</code> plus <code>X-Organization-ID</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>POST</code></td><td><code>/v1/ai/conversations</code></td><td>Create a conversation</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/ai/conversations</code></td><td>List active or archived accessible conversations</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/ai/conversations/{id}</code></td><td>Open one accessible conversation</td></tr>
+            <tr><td><code>PATCH</code></td><td><code>/v1/ai/conversations/{id}</code></td><td>Creator renames it</td></tr>
+            <tr><td><code>DELETE</code></td><td><code>/v1/ai/conversations/{id}</code></td><td>Creator archives it</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/ai/conversations/{id}/restore</code></td><td>Creator restores it</td></tr>
+            <tr><td><code>PUT</code></td><td><code>/v1/ai/conversations/{id}/collaborators</code></td><td>Creator replaces access list</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/ai/conversations/{id}/messages</code></td><td>Append a user message</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/ai/conversations/{id}/messages</code></td><td>Read ordered message history</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Create a conversation:</p>
+      <pre><code>POST /v1/ai/conversations
+Authorization: Bearer &lt;access-token&gt;
+X-Organization-ID: 6ee39f73-82a6-45e3-8aa1-a4193a48a3b3
+Content-Type: application/json
+
+{"title":"Phase 2 protocol"}</code></pre>
+
+      <p>Share with an exact set of collaborators:</p>
+      <pre><code>PUT /v1/ai/conversations/{conversation-id}/collaborators
+Authorization: Bearer &lt;access-token&gt;
+X-Organization-ID: 6ee39f73-82a6-45e3-8aa1-a4193a48a3b3
+Content-Type: application/json
+
+{"account_ids":["a9f6cfe8-397f-40f1-a23a-9f04b53d191f"]}</code></pre>
+      <p>
+        The collaborator list is replacement-based: accounts omitted from a later request lose
+        access. The creator does not need to include their own account ID and is never returned
+        as a collaborator.
+      </p>
+
+      <h2 id="safe-errors">Safe errors</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>401</code></td><td>Trusted account context is missing</td></tr>
+            <tr><td><code>403</code></td><td>A collaborator attempted a creator-only action</td></tr>
+            <tr><td><code>404</code></td><td>Conversation is missing, belongs to another organization, or is not shared</td></tr>
+            <tr><td><code>409</code></td><td>Conversation is archived or collaborator membership conflicts</td></tr>
+            <tr><td><code>422</code></td><td>Header, body, page limit, or cursor is malformed</td></tr>
+            <tr><td><code>503</code></td><td>PostgreSQL readiness check failed</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Validation responses remove raw input. Database queries, connection strings, exception
+        text, message content, and stack traces are never used as public error details.
+      </p>
+
+      <h2 id="local-verification">Local verification</h2>
+      <p>Run the isolated lifecycle test from the repository root:</p>
+      <pre><code>./scripts.sh ai test</code></pre>
+      <p>
+        It starts a clean PostgreSQL project on a Docker-assigned loopback port, migrates to
+        the current head, creates and shares multiple conversations, verifies cross-tenant
+        isolation and pagination, restarts PostgreSQL, verifies exact message history, removes
+        a collaborator's membership, and then removes the test containers and volume.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="organization-rbac.html"><span class="page-nav__dir">Previous</span>Organizations &amp; RBAC</a>
+        <a class="page-nav__next" href="../index.html"><span class="page-nav__dir">Back to</span>Overview</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#request-flow">Request flow</a></li>
+      <li><a href="#permissions">Permissions</a></li>
+      <li><a href="#archive-behavior">Archive behavior</a></li>
+      <li><a href="#message-ordering-and-pagination">Ordering &amp; pagination</a></li>
+      <li><a href="#public-endpoints">Public endpoints</a></li>
+      <li><a href="#safe-errors">Safe errors</a></li>
+      <li><a href="#local-verification">Local verification</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

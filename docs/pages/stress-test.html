@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stress Test Report — TrialScribe Docs</title>
+<meta name="description" content="Results, charts, and reproduction commands from TrialScribe's stress-and-data-scale-validation campaign, including an unresolved ingestion capacity ceiling.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html" aria-current="page">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Guide · Capacity validation</p>
+      <h1>Stress Test Report</h1>
+      <p class="lede">
+        Results from the <code>stress-and-data-scale-validation</code> roadmap feature: a
+        scaled-down local rehearsal of TrialScribe's capacity claims, run entirely against fake
+        chat and embedding providers with zero real external calls. It proved the gateway read
+        path holds up under spike and soak load, and it found a real, not-yet-fixed ingestion
+        capacity ceiling.
+      </p>
+
+      <div class="callout callout--amber">
+        <p class="callout__label">Scale disclosure</p>
+        <p>
+          This was run on a developer laptop (Intel i7-8650U, 8 threads, 15&nbsp;GB RAM), not
+          the documented reference hardware (8&nbsp;vCPU / 32&nbsp;GiB RAM / 500&nbsp;GB SSD). It
+          used 180 accounts, 720 conversations, and 1,520 documents — a safe, laptop-sized
+          fraction of the roadmap's target (100k accounts, 5M+ conversations, 1M+ documents).
+          It exercises the exact same code paths the full-scale run would use. The roadmap's
+          production capacity numbers cannot be claimed from this run alone — see
+          <a href="#scaling-up">scaling this up</a>.
+        </p>
+      </div>
+
+      <h2 id="headline">Headline result</h2>
+      <p>
+        The gateway-facing read path held up cleanly under load: <strong>100% of 2,151 k6
+        checks passed</strong>, with a <strong>0.00% HTTP error rate</strong> and p95 latency of
+        2.41&nbsp;s (threshold 3&nbsp;s), even while a large document-ingestion backlog was
+        actively accumulating in the background. The campaign also did exactly what a stress
+        campaign exists to do: it found two real bugs (fixed live) and one real, unresolved
+        capacity ceiling — documented rather than smoothed over.
+      </p>
+
+      <h2 id="latency">Gateway latency under spike + soak load</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-latency-percentiles.png" alt="Bar chart of gateway request latency: p50 699ms, p90 2008ms, p95 2413ms, p99 3212ms">
+        <figcaption>p50 = 699&nbsp;ms, p90 = 2,008&nbsp;ms, p95 = 2,413&nbsp;ms, p99 = 3,212&nbsp;ms — p95 threshold (3,000&nbsp;ms) passed. Higher than a quiet-system baseline because this run stacked spike/soak load on top of an active ingestion backlog deliberately, rather than measuring an idle stack.</figcaption>
+      </figure>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-check-pass-rates.png" alt="Chart of k6 check pass rates by endpoint, all at 100%">
+        <figcaption>k6 check pass rate by endpoint (live, me, conversations, M11 catalog, documents, probe job, job status) — all 100%. 390 iterations, 2,151 HTTP requests, ~1m48s of spike (40 VUs) + soak (15 VUs) load.</figcaption>
+      </figure>
+
+      <h2 id="queue-drain">The important finding: an ingestion capacity ceiling</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-queue-drain.png" alt="Line chart of cumulative index_document job outcomes: succeeded plateaus at 254 while failed climbs linearly past 1200">
+        <figcaption>Cumulative <code>index_document</code> job outcomes over the ~25-minute campaign, from Prometheus. Succeeded climbs to 254 in the first ~150s, then goes flat. Failed climbs almost linearly past 1,200 with no sign of levelling off.</figcaption>
+      </figure>
+      <p>
+        Once the seeded corpus reached roughly <strong>700 concurrently-active
+        conversations</strong>, the large majority of new document-indexing jobs stopped
+        completing successfully — and the failures were not transient; they did not recover on
+        their own within the observation window. Kafka consumer-group lag on
+        <code>trialscribe.job.v1</code> sat around 400 messages and was not draining. Failed
+        documents all showed the pipeline's generic terminal error after exhausting its retry
+        budget, for both <code>trial_data</code> and <code>research_document</code> uploads.
+      </p>
+      <p>
+        Root cause was not confirmed within this run's time budget. The leading theory, given
+        the architecture and the CPU charts below, is <code>ChromaIndex</code>'s
+        one-collection-per-conversation design — 720 conversations means 720 distinct Chroma
+        collections created and queried concurrently, which a single-container Chroma instance
+        may not sustain at that fan-out. <strong>This needs a follow-up investigation before the
+        roadmap's capacity numbers can cite a campaign like this as safe at target scale.</strong>
+      </p>
+
+      <h2 id="resources">Resource ceilings</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-resource-cpu.png" alt="Chart of container CPU usage over the campaign for gateway, worker, jobs, postgres, and chroma">
+        <figcaption>Container CPU (% of configured limit), sampled every 5 seconds for the full campaign. <code>worker</code> and <code>jobs</code> repeatedly hit their CPU caps — consistent with retries piling up rather than a clean failure.</figcaption>
+      </figure>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-resource-memory.png" alt="Chart of container memory usage over the campaign">
+        <figcaption>Container memory over the same window. No container was OOM-killed; host available memory never dropped below ~4.4&nbsp;GB (the run's abort floor was 1.5&nbsp;GB).</figcaption>
+      </figure>
+
+      <h2 id="what-was-built">What was built</h2>
+      <ul>
+        <li><code>scripts/seed_stress_corpus.py</code> — seeds a scaled synthetic corpus through the real gateway HTTP API, driving the existing bulk ingestion pipeline rather than reimplementing it.</li>
+        <li><code>infra/k6/stress.js</code> — k6 spike (ramping-VU) and soak (constant-VU) scenarios extending the existing <code>infra/k6/release.js</code> pattern.</li>
+        <li><code>infra/release/fault.yml</code> — a Compose overlay that injects a configurable fault (delay / timeout / rate-limit / error) into the fake chat provider, for exercising retries and circuit breaking safely.</li>
+        <li><code>scripts/run_fault_scenario.py</code> — drives <code>provider_probe</code> jobs through a baseline → faulted → recovery sequence.</li>
+        <li><code>scripts/sample_resources.sh</code> and <code>scripts/generate_stress_charts.py</code> — resource sampling and the charts on this page.</li>
+        <li>Three new <code>WORKER_FAKE_CHAT_FAULT_*</code> environment variables wiring the existing fake-provider fault mechanism to Compose, so a future campaign can drive it without code changes.</li>
+      </ul>
+
+      <h2 id="bugs-found">Bugs found and fixed live</h2>
+      <ol>
+        <li><strong>Upload content-validation bug.</strong> The seed script originally sent plain text for every document, but the API requires <code>trial_data</code> uploads to be a JSON object. This produced a 1-in-3 upload success rate in the first seeding batch; fixed by generating valid synthetic trial JSON. The second batch then uploaded with zero failures.</li>
+        <li><strong>Unhandled-timeout crash.</strong> A slow response's <code>TimeoutError</code> wasn't caught alongside <code>URLError</code>, so one slow request could crash the whole seeding batch. Fixed by catching <code>(URLError, TimeoutError, OSError)</code> and failing that one tenant instead of the batch.</li>
+      </ol>
+      <p>
+        A third, smaller finding: at the release profile's 0.5-CPU auth-service allocation,
+        sustained concurrent registration above ~4–8 in flight degrades badly (Argon2id password
+        hashing is deliberately CPU-heavy). Seeding concurrency was tuned down live from 12 to 4.
+      </p>
+
+      <h2 id="fault-injection">Fault injection: attempted, not completed cleanly</h2>
+      <p>
+        The mechanism itself works and is unit-tested. Running it live surfaced two issues, both
+        reported honestly rather than worked around: the fault overlay first targeted the wrong
+        container (<code>worker</code>, which is only the health boundary, instead of
+        <code>jobs</code>, which actually executes work) — fixed; then the fixed run was starved
+        by the ingestion backlog above and was aborted deliberately rather than pushed through.
+        No fault-scenario chart exists for this run — see <a href="#scaling-up">scaling this
+        up</a> for how to get a clean result.
+      </p>
+
+      <h2 id="scale-used">Scale used, and why</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Roadmap target</th><th>Used here</th></tr></thead>
+          <tbody>
+            <tr><td>Accounts</td><td>100k+</td><td>180</td></tr>
+            <tr><td>Conversations</td><td>5M+</td><td>720</td></tr>
+            <tr><td>Documents uploaded</td><td>1M+</td><td>1,520</td></tr>
+            <tr><td>Vector chunks indexed</td><td>10M+</td><td>~1,780 (only 254 of 1,520 documents finished indexing — see the finding above)</td></tr>
+            <tr><td>k6 spike</td><td>—</td><td>40 VUs, 10s ramp / 20s hold / 10s ramp-down</td></tr>
+            <tr><td>k6 soak</td><td>—</td><td>15 VUs for 60s</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="scaling-up">To scale this up on dedicated reference hardware</h2>
+      <ol>
+        <li>Fix the ingestion-failure finding first: reproduce with the caught exception temporarily logged, confirm or rule out the per-conversation Chroma collection theory, and re-run to verify <code>succeeded</code> no longer plateaus.</li>
+        <li>Re-run on the documented reference hardware (8 vCPU / 32 GiB RAM / 500 GB SSD) with the roadmap's actual targets over a multi-hour or multi-day window.</li>
+        <li>Raise <code>WORKER_PROVIDER_MAX_CONCURRENCY</code>, the auth service's CPU allocation, and the <code>jobs</code> service's CPU/replica count before that run.</li>
+        <li>Run the fault-injection scenario on a freshly-seeded, idle stack first, then repeat under background load.</li>
+        <li>Extend the seed script to cover multi-member organizations via the existing invitation flow, so RBAC-scoped listing is exercised at scale too.</li>
+      </ol>
+
+      <h2 id="reproduce">Exact reproduction commands</h2>
+      <pre><code>./scripts.sh env
+./scripts.sh install
+./scripts.sh auth keys
+./scripts.sh release up
+
+# Seed the corpus (rerun with a fresh --out each time):
+uv run --frozen --package trialscribe-worker python scripts/seed_stress_corpus.py \
+  --accounts 180 --conversations-per-org 4 --documents-per-conversation 3 \
+  --min-doc-chars 6000 --max-doc-chars 9000 --concurrency 4 \
+  --out infra/k6/results/seed-summary.json
+
+# Resource sampling, in the background across the whole campaign:
+scripts/sample_resources.sh trialscribe-release infra/k6/results/resource-samples.csv \
+  /tmp/stop-sampler 5
+
+# Spike + soak load:
+docker run --rm --network host \
+  -e BASE_URL=http://127.0.0.1:8000 \
+  -v "$(pwd)/infra/k6/stress.js:/scripts/stress.js:ro" \
+  -v "$(pwd)/infra/k6/results:/results" \
+  grafana/k6:2.2.0 run --summary-export /results/stress-summary.json \
+  /scripts/stress.js
+
+# Fault injection (best run before bulk seeding, per the finding above):
+uv run --frozen --package trialscribe-worker python scripts/run_fault_scenario.py \
+  --seed-summary infra/k6/results/seed-summary.json \
+  --jobs-per-phase 8 --out infra/k6/results/fault-scenario.json
+
+# Charts:
+uv run --with matplotlib==3.11.2 python scripts/generate_stress_charts.py \
+  --seed-summary infra/k6/results/seed-summary.json \
+  --k6-summary infra/k6/results/stress-summary.json \
+  --resource-csv infra/k6/results/resource-samples.csv \
+  --out-dir docs/assets
+
+./scripts.sh release down</code></pre>
+      <p>
+        Full methodology, both seeding batches, and every caveat:
+        <a href="https://github.com/xajeel/TrialScribe/blob/staging/docs-src/stress-test-report.md" target="_blank" rel="noopener">the source report in <code>docs-src/stress-test-report.md</code></a>.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="architecture.html"><span class="page-nav__dir">Previous</span>Architecture</a>
+        <a class="page-nav__next" href="operations.html"><span class="page-nav__dir">Next</span>Operations</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#headline">Headline result</a></li>
+      <li><a href="#latency">Gateway latency</a></li>
+      <li><a href="#queue-drain">Ingestion capacity ceiling</a></li>
+      <li><a href="#resources">Resource ceilings</a></li>
+      <li><a href="#what-was-built">What was built</a></li>
+      <li><a href="#bugs-found">Bugs found</a></li>
+      <li><a href="#fault-injection">Fault injection</a></li>
+      <li><a href="#scale-used">Scale used</a></li>
+      <li><a href="#scaling-up">Scaling this up</a></li>
+      <li><a href="#reproduce">Reproduction commands</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

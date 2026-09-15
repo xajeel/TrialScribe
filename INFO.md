@@ -70,7 +70,7 @@ Override ports with `GATEWAY_PORT`, `AUTH_PORT`, `USER_PORT`, `AI_PORT`, `WORKER
 
 The existing `sync`, `api`, and `up` commands remain compatibility aliases. `api` runs the AI
 boundary on port 8003; `up` starts the Compose release (same as `./scripts.sh release up`).
-See [docs/operations.md](docs/operations.md).
+See [docs-src/operations.md](docs-src/operations.md).
 
 ## Local infrastructure
 

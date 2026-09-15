@@ -1,0 +1,24 @@
+# Stress-campaign overlay: makes the fake chat provider inject a fault.
+#
+# Applied on top of infra/release/compose.yml only for the fault-injection
+# scenario in feature 28. It never touches a real provider — it configures
+# the same in-process FakeChatProvider the release profile already uses
+# (WORKER_CHAT_PROVIDER stays "fake"), so retries and circuit breaking can be
+# observed safely. `jobs` is the container that actually runs background
+# jobs (trialscribe_worker.runtime.main) and builds the provider gateway from
+# its own environment; `worker` is only the FastAPI health boundary, but it
+# is recreated alongside `jobs` so the two stay on the same configuration.
+# Recreate both with this file applied, run the scenario, then recreate them
+# again without this file to go back to normal. See
+# scripts/run_fault_scenario.py for the exact sequence.
+services:
+  jobs:
+    environment:
+      WORKER_FAKE_CHAT_FAULT_DELAY_SECONDS: "${STRESS_FAULT_DELAY_SECONDS:-0.2}"
+      WORKER_FAKE_CHAT_FAULT_ERROR: "${STRESS_FAULT_ERROR:-rate_limited}"
+      WORKER_FAKE_CHAT_FAULT_FAIL_TIMES: "${STRESS_FAULT_FAIL_TIMES:-0}"
+  worker:
+    environment:
+      WORKER_FAKE_CHAT_FAULT_DELAY_SECONDS: "${STRESS_FAULT_DELAY_SECONDS:-0.2}"
+      WORKER_FAKE_CHAT_FAULT_ERROR: "${STRESS_FAULT_ERROR:-rate_limited}"
+      WORKER_FAKE_CHAT_FAULT_FAIL_TIMES: "${STRESS_FAULT_FAIL_TIMES:-0}"

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture — TrialScribe Docs</title>
+<meta name="description" content="TrialScribe's LangGraph generation pipeline, v1 production topology, repository tooling structure, and service roadmap.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html" aria-current="page">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Guide</p>
+      <h1>Architecture</h1>
+      <p class="lede">
+        How a protocol section actually gets written — the LangGraph pipeline, the v1
+        production deployment shape, and the roadmap of services the monorepo is built to grow
+        into.
+      </p>
+
+      <h2 id="current-system">Current system</h2>
+      <p>
+        TrialScribe's core is a LangGraph state machine with three sequential nodes,
+        orchestrated per user session:
+      </p>
+      <ol>
+        <li>
+          <strong>Planner</strong> (<code>trialscribe_ai/agents/planner.py</code>) — takes the
+          user's query and a summary of the uploaded trial-design JSON, and produces a list of
+          ICH M11 protocol sections to write.
+        </li>
+        <li>
+          <strong>Researcher</strong> (<code>trialscribe_ai/agents/researcher.py</code>) — for
+          each section, generates search queries and pulls supporting evidence from two
+          sources:
+          <ul>
+            <li><strong>PubMed</strong> (<code>trialscribe_ai/retrieval/pubmed.py</code>) via the NCBI E-utilities API.</li>
+            <li><strong>Tavily web search</strong> (<code>trialscribe_ai/retrieval/tavily.py</code>), restricted to an allow-list of trusted domains (<code>trialscribe_ai/config/allowed_websites.yml</code>).</li>
+          </ul>
+          Retrieved evidence is chunked and embedded into a FAISS vector store
+          (<code>trialscribe_ai/storage/evidence_db.py</code>), which also stores
+          user-uploaded supporting PDFs and the trial-design JSON summary.
+        </li>
+        <li>
+          <strong>Writer</strong> (<code>trialscribe_ai/agents/writer.py</code>) — for each
+          section, retrieves the most relevant chunks from the FAISS stores
+          (<code>trialscribe_ai/retrieval/retriever.py</code>) and prompts an LLM to draft the
+          section text, citing sources.
+        </li>
+      </ol>
+      <p>
+        State (<code>AgentState</code> in <code>trialscribe_ai/models/schemas.py</code>) flows
+        through the graph: query → sections → written texts.
+      </p>
+
+      <h3 id="v1-production">v1 production</h3>
+      <p>
+        v1 production is the Docker Compose <strong>release</strong> profile
+        (<code>./scripts.sh release up</code>): one host runs the data stores, a migrate gate,
+        the API gateway, auth, user, AI, worker, jobs reader, and the nginx-hosted React
+        website. Host <code>uvicorn</code> processes are a local development path. Operator
+        steps (backup, restore, upgrade, rollback, capacity) live in the
+        <a href="operations.html">Operations guide</a>.
+      </p>
+
+      <h3 id="repository-tooling-structure">Repository tooling structure</h3>
+      <p>
+        <code>backend/</code> is a self-contained uv workspace: <code>backend/pyproject.toml</code>
+        is the workspace root for every Python service. <code>frontend/web</code> is a
+        standalone npm project, so the two toolchains never share a workspace root.
+      </p>
+
+      <h2 id="roadmap">Roadmap</h2>
+      <p>The monorepo layout anticipates the following services as independent, addable units:</p>
+      <ul>
+        <li><strong>auth-service</strong> — JWT-based authentication and RBAC authorization, so protocol generation can be gated per user/organization instead of being open by session ID alone.</li>
+        <li><strong>user-service</strong> — persistent users, accounts, and organizations backed by PostgreSQL, replacing the in-memory <code>ACTIVE_SESSIONS</code> dict with durable session/user records.</li>
+        <li><strong>worker-service</strong> — background job execution (e.g. Celery/Redis or ARQ) so long-running protocol generation runs outside the request/response cycle, with status polling instead of a blocking <code>generate-report</code> call.</li>
+        <li><strong>frontend/web</strong> — the React + TypeScript application, talking to backend services through the API gateway.</li>
+        <li><strong>API gateway</strong> — once multiple backend services exist, a gateway/reverse proxy in front of them for unified routing, auth enforcement, and rate limiting.</li>
+      </ul>
+      <p>
+        Each planned service currently has a <code>README.md</code> describing its intended
+        responsibility and API surface, with <code>Status: planned</code> — no stub
+        application code exists until it's built.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="../index.html"><span class="page-nav__dir">Previous</span>Overview</a>
+        <a class="page-nav__next" href="stress-test.html"><span class="page-nav__dir">Next</span>Stress Test Report</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#current-system">Current system</a></li>
+      <li><a href="#v1-production">v1 production</a></li>
+      <li><a href="#repository-tooling-structure">Repository tooling structure</a></li>
+      <li><a href="#roadmap">Roadmap</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>
