@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stress Test Report — TrialScribe Docs</title>
+<meta name="description" content="Results, charts, and peak resource usage from TrialScribe's stress-and-data-scale-validation campaign.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html" aria-current="page">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Guide · Capacity validation</p>
+      <h1>Stress Test Report</h1>
+      <p class="lede">
+        Results from the <code>stress-and-data-scale-validation</code> roadmap feature: a
+        scaled-down local rehearsal of the platform's capacity claims, run against fake chat and
+        embedding providers with zero real external calls.
+      </p>
+
+      <div class="stat-row" style="margin-bottom:2rem;">
+        <div class="stat">
+          <span class="stat__value">100%</span>
+          <span class="stat__label">of 4,780 k6 checks passed, 0.00% HTTP error rate</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value">1.4s</span>
+          <span class="stat__label">p95 gateway latency under spike + soak load (threshold 3s)</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value">2,160</span>
+          <span class="stat__label">documents uploaded across 180 accounts, 720 conversations</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value">5.1 / 8</span>
+          <span class="stat__label">CPU cores peak draw, out of this laptop's 8 threads</span>
+        </div>
+        <div class="stat">
+          <span class="stat__value">2.5 GiB</span>
+          <span class="stat__label">peak container memory at the busiest single moment</span>
+        </div>
+      </div>
+
+      <div class="callout callout--amber">
+        <p class="callout__label">Scale disclosure</p>
+        <p>
+          Run on a developer laptop (Intel i7-8650U, 8 threads, 15&nbsp;GB RAM), not the
+          documented reference hardware (8&nbsp;vCPU / 32&nbsp;GiB RAM / 500&nbsp;GB SSD). It
+          exercises the exact code paths the full-scale target would use, at a size that fits
+          safely on one machine. Production capacity numbers cannot be claimed from this run
+          alone — see <a href="#hardware">what hardware this run actually needed</a>.
+        </p>
+      </div>
+
+      <h2 id="latency">Gateway latency under spike + soak load</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-latency-percentiles.png" alt="Bar chart of gateway request latency percentiles">
+        <figcaption>p50 = 183&nbsp;ms, p90 = 1.02&nbsp;s, p95 = 1.4&nbsp;s, p99 = 2.5&nbsp;s — p95 threshold (3,000&nbsp;ms) passed with wide margin.</figcaption>
+      </figure>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-check-pass-rates.png" alt="Chart of k6 check pass rates by endpoint, all at 100%">
+        <figcaption>k6 check pass rate by endpoint — 100% across auth, conversations, the M11 section catalog, documents, and job status. 877 iterations, 4,780 HTTP requests, ~2m17s of combined spike (40 VUs) and soak (15 VUs) load.</figcaption>
+      </figure>
+
+      <h2 id="queue-drain">Document ingestion throughput</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-queue-drain.png" alt="Line chart of cumulative index_document job outcomes over the campaign">
+        <figcaption>Cumulative document-indexing outcomes over the campaign. Throughput is strong early and levels off as concurrent conversation count climbs — a capacity ceiling the full report analyzes in detail, with root-cause hypotheses and a fix plan.</figcaption>
+      </figure>
+
+      <h2 id="resources">Resource ceilings</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-resource-cpu.png" alt="Chart of container CPU usage over the campaign">
+        <figcaption>Container CPU (% of configured limit), sampled every 5 seconds across the campaign.</figcaption>
+      </figure>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-resource-memory.png" alt="Chart of container memory usage over the campaign">
+        <figcaption>Container memory over the same window. No container was OOM-killed; host available memory never dropped below 5.15&nbsp;GB.</figcaption>
+      </figure>
+
+      <h2 id="hardware">Peak resource consumption, and what hardware this run actually needed</h2>
+      <p>
+        Per-container limits describe what each service is <em>allowed</em> to use. This answers
+        a different question: at the single busiest moment, how much did the whole stack actually
+        draw on this laptop? Computed by summing every container's live CPU% and memory at each
+        matching timestamp, then taking the maximum:
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Metric</th><th>Peak value</th></tr></thead>
+          <tbody>
+            <tr><td>Total CPU across every container</td><td><strong>509% ≈ 5.1 cores</strong> of this laptop's 8</td></tr>
+            <tr><td>Total container memory</td><td><strong>2,509 MiB ≈ 2.5 GiB</strong></td></tr>
+            <tr><td>Host available memory, low point</td><td><strong>5.15 GiB</strong> (abort floor was 1.5 GiB)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <p class="callout__label">What to actually buy, to replicate this specific rehearsal</p>
+        <p>
+          Not the aspirational 8&nbsp;vCPU / 32&nbsp;GiB reference-hardware target above — that's
+          sized for the full 1M+ document roadmap target. This run's peak draw of ~5.1 cores and
+          ~2.5&nbsp;GiB maps, with headroom, to roughly an <strong>8&nbsp;vCPU / 8–16&nbsp;GiB
+          compute-optimized instance</strong> — for example an AWS <code>c6i.2xlarge</code>, a GCP
+          <code>c2-standard-8</code>, or an equivalent 8&nbsp;vCPU cloud instance. This workload is
+          CPU-bound, not memory-bound: a high-RAM tier would be wasted spend at this corpus size.
+        </p>
+      </div>
+
+      <h2 id="fault-injection">Fault tolerance</h2>
+      <figure class="figure" style="padding:0 0 1rem;">
+        <img src="../assets/stress-circuit-breaker.png" alt="Chart of the fake provider circuit breaker state opening under an injected fault and closing again once it clears">
+        <figcaption>Circuit-breaker state, read from Prometheus, across an injected-fault scenario against the fake provider: closed under normal conditions, opens once a fault is injected, closes again after it clears.</figcaption>
+      </figure>
+
+      <h2 id="scale-used">Scale used</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Roadmap target</th><th>Used here</th></tr></thead>
+          <tbody>
+            <tr><td>Accounts</td><td>100k+</td><td>180</td></tr>
+            <tr><td>Conversations</td><td>5M+</td><td>720</td></tr>
+            <tr><td>Documents uploaded</td><td>1M+</td><td>2,160</td></tr>
+            <tr><td>k6 spike</td><td>—</td><td>40 VUs</td></tr>
+            <tr><td>k6 soak</td><td>—</td><td>15 VUs, 90s</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="reproduce">Reproduction</h2>
+      <pre><code>./scripts.sh env
+./scripts.sh install
+./scripts.sh release up
+
+infra/stress/sample_resources.sh trialscribe-release infra/stress/results/resource-samples.csv \
+  /tmp/stop-stress-sampler 5
+
+uv run --frozen --package trialscribe-worker python infra/stress/seed_stress_corpus.py \
+  --accounts 180 --conversations-per-org 4 --documents-per-conversation 3 \
+  --out infra/stress/results/seed-summary.json
+
+docker run --rm --network host -e BASE_URL=http://127.0.0.1:8000 \
+  -v "$(pwd)/infra/stress/stress.js:/scripts/stress.js:ro" \
+  -v "$(pwd)/infra/stress/results:/results" \
+  grafana/k6:2.2.0 run --summary-export /results/stress-summary.json /scripts/stress.js
+
+touch /tmp/stop-stress-sampler
+uv run --with matplotlib==3.11.2 python infra/stress/generate_stress_charts.py \
+  --out-dir docs/assets
+
+./scripts.sh release down</code></pre>
+
+      <p>
+        Full methodology, root-cause analysis of the ingestion ceiling, and every reproduction
+        detail: <a href="https://github.com/xajeel/TrialScribe/blob/staging/docs/src/stress-test-report.md" target="_blank" rel="noopener">the source report in <code>docs/src/stress-test-report.md</code></a>.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="architecture.html"><span class="page-nav__dir">Previous</span>Architecture</a>
+        <a class="page-nav__next" href="operations.html"><span class="page-nav__dir">Next</span>Operations</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#latency">Gateway latency</a></li>
+      <li><a href="#queue-drain">Ingestion throughput</a></li>
+      <li><a href="#resources">Resource ceilings</a></li>
+      <li><a href="#hardware">Peak usage &amp; hardware sizing</a></li>
+      <li><a href="#fault-injection">Fault tolerance</a></li>
+      <li><a href="#scale-used">Scale used</a></li>
+      <li><a href="#reproduce">Reproduction</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

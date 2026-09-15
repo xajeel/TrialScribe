@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup &amp; commands — TrialScribe Docs</title>
+<meta name="description" content="Local setup, environment configuration, and every command to run, test, and release TrialScribe.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html" aria-current="page">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Guide · Local setup</p>
+      <h1>Setup &amp; commands</h1>
+      <p class="lede">
+        Local setup, environment, and every command to run, test, and release TrialScribe. The
+        repository is a service-oriented monorepo — gateway, authentication, user, AI, worker,
+        and React boundaries can be run and verified independently before later features add
+        their domain behavior.
+      </p>
+
+      <h2 id="quickstart">Quickstart</h2>
+      <p>Install <code>uv</code>, Node.js 24.18.0, npm 11.16.0, and Docker Compose 2.24.4 or newer, then run:</p>
+      <pre><code>./scripts.sh env
+./scripts.sh install
+./scripts.sh infra up
+./scripts.sh infra check
+./scripts.sh db migrate
+./scripts.sh auth keys
+./scripts.sh lint
+./scripts.sh test
+./scripts.sh smoke</code></pre>
+      <p>
+        Fill the provider placeholders in <code>.env</code> before using AI generation. Health
+        and smoke checks do not require real provider credentials.
+      </p>
+
+      <h2 id="application-boundaries">Application boundaries</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Boundary</th><th>Root command</th><th>Default port</th><th>Health</th></tr></thead>
+          <tbody>
+            <tr><td>API gateway</td><td><code>./scripts.sh run gateway</code></td><td>8000</td><td><code>/health/live</code>, <code>/health/ready</code></td></tr>
+            <tr><td>Authentication</td><td><code>./scripts.sh run auth</code></td><td>8001</td><td><code>/health/live</code>, <code>/health/ready</code></td></tr>
+            <tr><td>User</td><td><code>./scripts.sh run user</code></td><td>8002</td><td><code>/health/live</code>, <code>/health/ready</code></td></tr>
+            <tr><td>AI engine</td><td><code>./scripts.sh run ai</code></td><td>8003</td><td><code>/health/live</code>, <code>/health/ready</code></td></tr>
+            <tr><td>Worker</td><td><code>./scripts.sh run worker</code></td><td>8004</td><td><code>/health/live</code>, <code>/health/ready</code></td></tr>
+            <tr><td>React web</td><td><code>./scripts.sh run web</code></td><td>5173</td><td>Browser root</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Override ports with <code>GATEWAY_PORT</code>, <code>AUTH_PORT</code>,
+        <code>USER_PORT</code>, <code>AI_PORT</code>, <code>WORKER_PORT</code>, or
+        <code>WEB_PORT</code>. The web smoke preview uses <code>WEB_SMOKE_PORT</code> and
+        defaults to 4173.
+      </p>
+
+      <h2 id="root-commands">Root commands</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Purpose</th><th>Command</th></tr></thead>
+          <tbody>
+            <tr><td>Install frozen dependencies</td><td><code>./scripts.sh install</code></td></tr>
+            <tr><td>Create <code>.env</code> if missing</td><td><code>./scripts.sh env</code></td></tr>
+            <tr><td>Run a boundary</td><td><code>./scripts.sh run &lt;gateway|auth|user|ai|worker|web&gt;</code></td></tr>
+            <tr><td>Lint Python and TypeScript</td><td><code>./scripts.sh lint</code></td></tr>
+            <tr><td>Run all service tests</td><td><code>./scripts.sh test</code></td></tr>
+            <tr><td>Smoke-test all boundaries</td><td><code>./scripts.sh smoke</code></td></tr>
+            <tr><td>Start local infrastructure</td><td><code>./scripts.sh infra up</code></td></tr>
+            <tr><td>Check local infrastructure</td><td><code>./scripts.sh infra check</code></td></tr>
+            <tr><td>Stop local infrastructure</td><td><code>./scripts.sh infra down</code></td></tr>
+            <tr><td>Test isolated infrastructure</td><td><code>./scripts.sh infra test</code></td></tr>
+            <tr><td>Start the Compose release</td><td><code>./scripts.sh release up</code></td></tr>
+            <tr><td>Smoke-check the Compose release</td><td><code>./scripts.sh release smoke</code></td></tr>
+            <tr><td>Backup / restore / restart release Postgres</td><td><code>./scripts.sh release backup</code> / <code>restore</code> / <code>restart</code></td></tr>
+            <tr><td>Load-test the release (scaled; <code>--full</code> on reference hardware)</td><td><code>./scripts.sh release load</code></td></tr>
+            <tr><td>Run the release acceptance suite</td><td><code>./scripts.sh release test</code></td></tr>
+            <tr><td>Stop the Compose release</td><td><code>./scripts.sh release down</code></td></tr>
+            <tr><td>Migrate PostgreSQL to current</td><td><code>./scripts.sh db migrate</code></td></tr>
+            <tr><td>Check PostgreSQL revision</td><td><code>./scripts.sh db current</code></td></tr>
+            <tr><td>Test isolated database lifecycle</td><td><code>./scripts.sh db test</code></td></tr>
+            <tr><td>Generate local authentication keys</td><td><code>./scripts.sh auth keys</code></td></tr>
+            <tr><td>Test isolated authentication lifecycle</td><td><code>./scripts.sh auth test</code></td></tr>
+            <tr><td>Test isolated organization RBAC lifecycle</td><td><code>./scripts.sh user test</code></td></tr>
+            <tr><td>Show command help</td><td><code>./scripts.sh help</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The existing <code>sync</code>, <code>api</code>, and <code>up</code> commands remain
+        compatibility aliases. <code>api</code> runs the AI boundary on port 8003;
+        <code>up</code> starts the Compose release (same as
+        <code>./scripts.sh release up</code>). See the <a href="operations.html">Operations guide</a>.
+      </p>
+
+      <h2 id="local-infrastructure">Local infrastructure</h2>
+      <p>
+        <code>./scripts.sh infra up</code> starts PostgreSQL with pgvector on
+        <code>127.0.0.1:5432</code>, Redis on <code>127.0.0.1:6379</code>, Apache Kafka on
+        <code>127.0.0.1:9092</code>, Prometheus on <code>127.0.0.1:9090</code>, and Grafana on
+        <code>127.0.0.1:3000</code>. The command creates <code>.env</code> from
+        <code>.env_example</code> when needed and waits until the data stores and scrape stack
+        are healthy. Update the local-only placeholder passwords in <code>.env</code> when your
+        environment requires different values.
+      </p>
+      <p>
+        After the backend processes are running (<code>./scripts.sh run …</code>), open
+        Prometheus at <code>http://127.0.0.1:9090</code> and Grafana at
+        <code>http://127.0.0.1:3000</code> (user <code>admin</code>, password from
+        <code>GRAFANA_ADMIN_PASSWORD</code>). Provisioned boards appear under the TrialScribe
+        folder.
+      </p>
+      <p>
+        Development data lives in Docker named volumes under the <code>trialscribe-dev</code>
+        Compose project. <code>infra down</code> stops containers without deleting those
+        volumes, so ordinary stops and restarts preserve data. To explicitly remove development
+        containers and data, run:
+      </p>
+      <pre><code>docker compose --env-file .env -p trialscribe-dev --profile infrastructure down --volumes</code></pre>
+      <p>
+        <code>./scripts.sh infra test</code> uses the separate <code>trialscribe-test</code>
+        project without publishing host ports. It verifies database, vector, Redis, and Kafka
+        operations across a restart, then always removes its test containers, network, and
+        volumes.
+      </p>
+
+      <h2 id="postgresql-schema-lifecycle">PostgreSQL schema lifecycle</h2>
+      <p>
+        <code>./scripts.sh db migrate</code> applies the ordered Alembic migrations using
+        <code>DATABASE_URL</code> from <code>.env</code>; <code>./scripts.sh db current</code>
+        verifies that database is at the single current revision. Neither command prints the
+        connection URL or password.
+      </p>
+      <p>
+        <code>./scripts.sh db test</code> is destructive only to its isolated
+        <code>trialscribe-db-test</code> Compose project. It starts a fresh PostgreSQL volume on
+        a Docker-assigned loopback port, tests empty and previous-revision upgrades, transaction
+        rollback, organization scope, pgvector, and restart persistence, then always removes its
+        containers, network, and volume.
+      </p>
+
+      <h2 id="local-authentication">Local authentication</h2>
+      <p>
+        Run <code>./scripts.sh auth keys</code> once to fill empty Ed25519 signing-key and
+        HMAC-secret placeholders in <code>.env</code> without printing or replacing existing
+        values. After infrastructure is healthy and <code>./scripts.sh db migrate</code> has
+        run, start the service with <code>./scripts.sh run auth</code>.
+      </p>
+      <p>
+        Individuals can register at <code>POST /v1/auth/register</code> and log in at
+        <code>POST /v1/auth/login</code>. The access token is returned in JSON; the refresh
+        token is restricted to an HttpOnly, SameSite cookie. Browser calls to refresh or
+        current-session logout must copy the readable <code>trialscribe_csrf</code> cookie into
+        the <code>X-CSRF-Token</code> header. The user service reuses the signed global account
+        ID while loading organization roles from PostgreSQL on every protected call.
+      </p>
+      <p>
+        <code>./scripts.sh auth test</code> is destructive only to the isolated
+        <code>trialscribe-auth-test</code> project. It migrates a fresh database, proves
+        registration, login, token rotation/replay rejection, logout scopes, throttling, and
+        persistence across PostgreSQL/Redis restarts, then removes all test containers and
+        volumes. Production deployments require HTTPS, <code>AUTH_COOKIE_SECURE=true</code>,
+        and externally managed non-placeholder keys and secrets.
+      </p>
+
+      <h2 id="local-organizations-and-rbac">Local organizations and RBAC</h2>
+      <p>
+        Login never asks whether a person is an individual or an organization. An authenticated
+        account may remain organization-free, create an organization and become its owner, or
+        accept a one-time invitation link. Start infrastructure, migrate the database, generate
+        auth keys, then run the user boundary with <code>./scripts.sh run user</code>; its
+        OpenAPI UI is available at <code>http://localhost:8002/docs</code>.
+      </p>
+      <p>
+        Roles are <code>owner</code>, <code>admin</code>, and <code>member</code>. Owners manage
+        every membership and invite admins or members; admins manage member access; members can
+        read their organization and member list. The last owner cannot be removed or demoted.
+        <code>./scripts.sh user test</code> verifies this lifecycle against an isolated
+        PostgreSQL project and deletes that project's containers and volume.
+      </p>
+
+      <h2 id="repository-layout">Repository layout</h2>
+      <ul>
+        <li><code>backend/</code> — uv workspace containing gateway, auth, user, AI, and worker packages.</li>
+        <li><code>backend/packages/database/</code> — shared PostgreSQL runtime and ordered migrations.</li>
+        <li><code>frontend/web/</code> — React application shell.</li>
+        <li><code>infra/</code> — local Docker Compose initialization assets.</li>
+      </ul>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="operations.html"><span class="page-nav__dir">Previous</span>Operations</a>
+        <a class="page-nav__next" href="api-gateway.html"><span class="page-nav__dir">Next</span>API Gateway</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#quickstart">Quickstart</a></li>
+      <li><a href="#application-boundaries">Application boundaries</a></li>
+      <li><a href="#root-commands">Root commands</a></li>
+      <li><a href="#local-infrastructure">Local infrastructure</a></li>
+      <li><a href="#postgresql-schema-lifecycle">PostgreSQL schema lifecycle</a></li>
+      <li><a href="#local-authentication">Local authentication</a></li>
+      <li><a href="#local-organizations-and-rbac">Local organizations and RBAC</a></li>
+      <li><a href="#repository-layout">Repository layout</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

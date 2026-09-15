@@ -14,6 +14,7 @@ from trialscribe_worker.providers.factory import build_providers
 from trialscribe_worker.providers.fake import FakeChatProvider, FakeEmbeddingProvider
 from trialscribe_worker.providers.fastembed import FastEmbedProvider
 from trialscribe_worker.providers.types import ChatMessage, ChatRequest, EmbeddingRequest
+from trialscribe_worker.utils.enum import ProviderOutcome
 from trialscribe_worker.utils.exceptions import (
     ProviderConfigError,
     ProviderRateLimitedError,
@@ -179,6 +180,23 @@ def test_factory_returns_fakes_for_default_settings() -> None:
     )
     assert isinstance(chat, FakeChatProvider)
     assert isinstance(embed, FakeEmbeddingProvider)
+
+
+def test_factory_wires_fake_chat_fault_from_settings() -> None:
+    chat, _ = build_providers(
+        WorkerSettings(
+            chat_provider="fake",
+            embedding_provider="fake",
+            fake_chat_fault_delay_seconds=0.01,
+            fake_chat_fault_error="rate_limited",
+            fake_chat_fault_fail_times=2,
+        ),
+        WorkerSecretSettings(),
+    )
+    assert isinstance(chat, FakeChatProvider)
+    assert chat.fault.delay_seconds == 0.01
+    assert chat.fault.error is ProviderOutcome.RATE_LIMITED
+    assert chat.fault.fail_times == 2
 
 
 def test_factory_rejects_deepseek_without_a_key() -> None:

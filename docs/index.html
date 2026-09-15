@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrialScribe Documentation</title>
+<meta name="description" content="Engineering documentation for TrialScribe: architecture, operations, and service-level deep dives for an ICH M11 clinical trial protocol drafting platform.">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <a class="brand" href="index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">
+      <span class="header-link__label">GitHub</span> ↗
+    </a>
+  </div>
+</header>
+
+<main id="content">
+
+  <section class="hero">
+    <p class="hero__eyebrow">Engineering documentation</p>
+    <h1>How TrialScribe drafts citation-backed clinical trial protocols</h1>
+    <p class="lede">
+      TrialScribe is a production-grade, multi-tenant SaaS platform that helps clinical
+      research teams draft ICH M11–compliant protocol sections directly from trial data,
+      uploaded source documents, and external literature. Every AI-drafted claim is grounded
+      in a traceable citation — an uploaded passage, a PubMed result, or a vetted web source
+      — rather than an unverifiable model assertion.
+    </p>
+    <div class="hero__actions">
+      <a class="btn btn--primary" href="pages/architecture.html">Read the architecture</a>
+      <a class="btn btn--ghost" href="pages/setup.html">Run it locally</a>
+    </div>
+  </section>
+
+  <figure class="figure">
+    <img src="assets/homepage.png" alt="TrialScribe authoring workspace" width="1200">
+    <figcaption>The authoring workspace: protocol sections drafted with inline, traceable citations.</figcaption>
+  </figure>
+
+  <section class="section">
+    <div class="section__head">
+      <p class="hero__eyebrow">At a glance</p>
+      <h2>A service-oriented platform, not a single AI wrapper</h2>
+      <p class="lede">
+        A React/TypeScript authoring workspace sits behind a FastAPI API gateway, which routes
+        to five independently deployable backend services connected through an Apache Kafka
+        event backbone. Retrieval-Augmented Generation grounds every generated section in
+        traceable source passages.
+      </p>
+    </div>
+    <div class="stat-row">
+      <div class="stat">
+        <span class="stat__value">5</span>
+        <span class="stat__label">independently deployable backend services</span>
+      </div>
+      <div class="stat">
+        <span class="stat__value">500</span>
+        <span class="stat__label">concurrent users validated on the release stack</span>
+      </div>
+      <div class="stat">
+        <span class="stat__value">10,000</span>
+        <span class="stat__label">daily background-job equivalents load-tested</span>
+      </div>
+      <div class="stat">
+        <span class="stat__value">Ed25519</span>
+        <span class="stat__label">signed JWTs with strict per-tenant isolation</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section__head">
+      <p class="hero__eyebrow">System architecture</p>
+      <h2>Request flow, end to end</h2>
+      <p class="lede">
+        The authoring workspace calls the API gateway, which authenticates and routes to the
+        backend service mesh. Services coordinate long-running work over the Kafka event
+        backbone, persist tenant-scoped state in PostgreSQL/pgvector and ChromaDB, and reach
+        external LLM (DeepSeek, OpenAI) and research (PubMed, allow-listed web) providers only
+        from the worker boundary.
+      </p>
+    </div>
+    <img src="assets/architecture-diagram.png" alt="TrialScribe system architecture diagram" width="1200"
+      style="border:1px solid var(--color-border); border-radius:3px; background:#fff;">
+  </section>
+
+  <section class="section">
+    <div class="section__head">
+      <p class="hero__eyebrow">Stack</p>
+      <h2>Tech stack</h2>
+    </div>
+    <div class="table-wrap">
+      <table class="tech-table">
+        <thead>
+          <tr><th>Layer</th><th>Technologies</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Frontend</td><td>React, TypeScript, Vite</td></tr>
+          <tr><td>Backend</td><td>Python, FastAPI, async SQLAlchemy, Alembic</td></tr>
+          <tr><td>Data &amp; retrieval</td><td>PostgreSQL, pgvector, ChromaDB, Redis</td></tr>
+          <tr><td>Messaging</td><td>Apache Kafka (event-driven service backbone)</td></tr>
+          <tr><td>AI / RAG</td><td>Retrieval-Augmented Generation, OpenAI (embeddings), DeepSeek (chat &amp; reasoning)</td></tr>
+          <tr><td>Infrastructure</td><td>Docker, Docker Compose, Prometheus, Grafana, k6</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section__head">
+      <p class="hero__eyebrow">Explore</p>
+      <h2>Guides &amp; service deep dives</h2>
+      <p class="lede">
+        Everything below is rendered from the repository's reference documentation, so you can
+        read the platform's design and operating model without cloning the code.
+      </p>
+    </div>
+
+    <p class="hero__eyebrow" style="margin-top:0;">Guides</p>
+    <div class="card-grid" style="margin-bottom:1.8rem;">
+      <a class="card" href="pages/architecture.html">
+        <p class="card__kicker">Design &amp; roadmap</p>
+        <h3>Architecture</h3>
+        <p>The LangGraph planner → researcher → writer pipeline, the v1 production topology, and where the platform is headed.</p>
+      </a>
+      <a class="card" href="pages/stress-test.html">
+        <p class="card__kicker">Capacity validation</p>
+        <h3>Stress Test Report</h3>
+        <p>Spike/soak results, resource ceilings, and a real ingestion capacity ceiling found and documented — with exact reproduction commands.</p>
+      </a>
+      <a class="card" href="pages/operations.html">
+        <p class="card__kicker">Operator handbook</p>
+        <h3>Operations</h3>
+        <p>Start, backup, restore, upgrade, rollback, and load-test the Docker Compose release stack.</p>
+      </a>
+      <a class="card" href="pages/setup.html">
+        <p class="card__kicker">Local setup</p>
+        <h3>Setup &amp; commands</h3>
+        <p>Install prerequisites, bring up local infrastructure, and every <code>scripts.sh</code> command that runs, tests, and releases the platform.</p>
+      </a>
+    </div>
+
+    <p class="hero__eyebrow">Services</p>
+    <div class="card-grid">
+      <a class="card" href="pages/api-gateway.html">
+        <p class="card__kicker">Service deep dive</p>
+        <h3>API Gateway</h3>
+        <p>The single public door to the backend: JWT verification, organization headers, request IDs, and safe error contracts.</p>
+      </a>
+      <a class="card" href="pages/auth-service.html">
+        <p class="card__kicker">Service deep dive</p>
+        <h3>Authentication</h3>
+        <p>Accounts, Argon2id passwords, Ed25519 access tokens, refresh rotation, CSRF protection, and login throttling.</p>
+      </a>
+      <a class="card" href="pages/organization-rbac.html">
+        <p class="card__kicker">Service deep dive</p>
+        <h3>Organizations &amp; RBAC</h3>
+        <p>Owner/admin/member roles, one-time invitation links, and permission checks on every protected request.</p>
+      </a>
+      <a class="card" href="pages/conversation-workspaces.html">
+        <p class="card__kicker">Service deep dive</p>
+        <h3>Conversation Workspaces</h3>
+        <p>Durable AI conversation memory, collaborator access, archiving, and cursor-based pagination.</p>
+      </a>
+      <a class="card" href="pages/worker-service.html">
+        <p class="card__kicker">Service deep dive</p>
+        <h3>Worker Service</h3>
+        <p>Background jobs, RAG indexing and retrieval, web research evidence, and citation-backed section generation.</p>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

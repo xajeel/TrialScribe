@@ -35,7 +35,7 @@ port `8000`, where conversation paths begin with `/v1/ai`.
 
 Work that talks to a model is requested as a job (`provider_probe` proves the door).
 PostgreSQL conversation messages are the source of truth for product memory.
-See `docs/conversation-workspaces.md` for the flow, permissions, pagination, and error contracts.
+See `docs/src/conversation-workspaces.md` for the flow, permissions, pagination, and error contracts.
 
 ## Tests
 

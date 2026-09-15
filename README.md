@@ -53,12 +53,48 @@ boundary.
 | AI / RAG | Retrieval-Augmented Generation, OpenAI (embeddings), DeepSeek (chat & reasoning) |
 | Infrastructure | Docker, Docker Compose, Prometheus, Grafana, k6 |
 
+## Stress test
+
+Feature 28 of the roadmap (`stress-and-data-scale-validation`) ran twice as a scaled-down local
+rehearsal of the platform's capacity claims — entirely against fake chat/embedding providers,
+with zero real external calls. The second run seeded 180 accounts, 720 conversations, and 2,160
+documents through the real gateway API (zero upload failures), then ran a k6 spike + soak load
+and, for the first time, a clean end-to-end fault-injection pass.
+
+<p align="center">
+  <img src="docs/assets/stress-latency-percentiles.png" alt="Gateway request latency percentiles under spike and soak load" width="440">
+  <img src="docs/assets/stress-queue-drain.png" alt="Ingestion queue drain during corpus seeding" width="440">
+</p>
+
+**Gateway read path held up cleanly:** 4,780/4,780 k6 checks passed (100%), 0.00% HTTP error
+rate, p95 latency 1.4s (threshold 3s). **The run confirmed a real capacity ceiling:**
+document-indexing throughput plateaus at 527 of 2,160 documents (24.4%) once the corpus reaches
+roughly 700 concurrently-active conversations, with failures climbing linearly afterward — the
+same ceiling found on the first run, still unfixed, flagged for root-cause follow-up rather than
+smoothed over. Fault injection ran mechanically clean this time but surfaced a separate,
+previously-hidden reliability issue in the `provider_probe` job path.
+
+**Peak resources this laptop actually used:** ~5.1 of 8 CPU cores and ~2.5 GiB of container
+memory at the busiest moment — mapping to roughly an 8 vCPU / 8–16 GiB cloud instance to
+replicate this specific rehearsal (not the aspirational 8 vCPU / 32 GiB reference-hardware
+target, which is sized for the full roadmap-scale corpus).
+
+Full methodology, both runs compared side by side, every chart, exact reproduction commands,
+and the capacity-ceiling analysis: [docs/src/stress-test-report.md](docs/src/stress-test-report.md),
+or the rendered version at [docs/pages/stress-test.html](docs/pages/stress-test.html) on the
+documentation site.
+
 ## Documentation
 
-- [INFO.md](INFO.md) — local setup, environment configuration, and every command to run,
+The full documentation site — architecture, operations, service deep dives, and local setup,
+rendered for reading rather than raw markdown — is published via GitHub Pages from
+[`docs/`](docs/index.html).
+
+- [docs/src/info.md](docs/src/info.md) — local setup, environment configuration, and every command to run,
   test, and release the platform.
-- [docs/architecture.md](docs/architecture.md) — full system design and roadmap.
-- [docs/operations.md](docs/operations.md) — operational runbook for the Compose release profile.
-- [docs/api-gateway.md](docs/api-gateway.md), [docs/auth-service.md](docs/auth-service.md),
-  [docs/organization-rbac.md](docs/organization-rbac.md),
-  [docs/conversation-workspaces.md](docs/conversation-workspaces.md) — service-level deep dives.
+- [docs/src/architecture.md](docs/src/architecture.md) — full system design and roadmap.
+- [docs/src/operations.md](docs/src/operations.md) — operational runbook for the Compose release profile.
+- [docs/src/api-gateway.md](docs/src/api-gateway.md), [docs/src/auth-service.md](docs/src/auth-service.md),
+  [docs/src/organization-rbac.md](docs/src/organization-rbac.md),
+  [docs/src/conversation-workspaces.md](docs/src/conversation-workspaces.md),
+  [docs/src/worker-service.md](docs/src/worker-service.md) — service-level deep dives.
