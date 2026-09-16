@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organizations &amp; RBAC — TrialScribe Docs</title>
+<meta name="description" content="How the TrialScribe user service decides what an authenticated person may do inside an organization: roles, invitations, and permission checks.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html" aria-current="page">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Service deep dive</p>
+      <h1>Organizations and RBAC</h1>
+      <p class="lede">
+        The user service decides what an authenticated person may do inside an organization.
+        Login still belongs to the authentication service: there is no
+        individual-versus-organization checkbox or organization dropdown. A person logs in
+        once, then creates an organization or accepts an invitation after login.
+      </p>
+
+      <h2 id="flow">Flow</h2>
+      <pre class="diagram"><code>Global account logs in
+        │
+        ├── creates organization ──&gt; owner membership
+        │
+        └── accepts one-time link ─&gt; admin or member membership
+                                      │
+Organization request ─&gt; verify JWT ─&gt; load current membership ─&gt; allow or deny</code></pre>
+      <p>
+        An account can have no organization, belong to several organizations, or own several.
+        The organization UUID in each route selects the workspace; roles are never chosen at
+        login and never trusted from browser-supplied account or organization fields.
+      </p>
+
+      <h2 id="roles">Roles</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Action</th><th>Owner</th><th>Admin</th><th>Member</th></tr></thead>
+          <tbody>
+            <tr><td>Read organization and members</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Invite a member</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+            <tr><td>Invite an admin</td><td>Yes</td><td>No</td><td>No</td></tr>
+            <tr><td>Revoke/remove member access</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+            <tr><td>Change roles or manage admins/owners</td><td>Yes</td><td>No</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Several owners are allowed, but the service locks membership rows and rejects any
+        change that would remove or demote the last owner. Permissions come from PostgreSQL on
+        every protected request, so a role change or removal applies immediately without
+        waiting for the 15-minute access token to expire.
+      </p>
+
+      <h2 id="api-routes">API routes</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method</th><th>Route</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>POST</code></td><td><code>/v1/organizations</code></td><td>Create an organization and become owner</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/organizations</code></td><td>List the current account's organizations</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/organizations/{organization_id}</code></td><td>Read one visible organization</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/organizations/{organization_id}/members</code></td><td>List current memberships</td></tr>
+            <tr><td><code>PATCH</code></td><td><code>/v1/organizations/{organization_id}/members/{account_id}</code></td><td>Change a role</td></tr>
+            <tr><td><code>DELETE</code></td><td><code>/v1/organizations/{organization_id}/members/{account_id}</code></td><td>Remove access</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/organizations/{organization_id}/invitations</code></td><td>Create a one-time link</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/organizations/{organization_id}/invitations</code></td><td>List invitation metadata</td></tr>
+            <tr><td><code>DELETE</code></td><td><code>/v1/organizations/{organization_id}/invitations/{invitation_id}</code></td><td>Revoke a link</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/organization-invitations/accept</code></td><td>Accept a link as the logged-in account</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        All routes require <code>Authorization: Bearer &lt;access-token&gt;</code>. A missing or
+        invalid token returns the same generic <code>401</code>. An organization that the
+        account cannot see returns <code>404</code>, while an insufficient role in a visible
+        organization returns <code>403</code>.
+      </p>
+
+      <h2 id="invitation-safety-and-delivery">Invitation safety and delivery</h2>
+      <p>
+        The service creates 32 random bytes and places the URL-safe value in
+        <code>accept_url</code>. PostgreSQL stores only its SHA-256 hash, expiry, accepted
+        time, and revoked time. The raw link is returned only by the creation response;
+        invitation lists never contain it. A valid link works once for seven days, and unknown,
+        expired, revoked, consumed, and modified values share one safe error.
+      </p>
+      <p>
+        Email delivery is not implemented yet. For now, the owner or admin who creates the
+        invitation must copy the returned link and securely deliver it to the intended person.
+        Production links must use the configured HTTPS frontend URL and must not be logged. A
+        future email worker can deliver the same one-time URL without changing membership or
+        acceptance rules.
+      </p>
+
+      <h2 id="local-use">Local use</h2>
+      <pre><code>./scripts.sh env
+./scripts.sh infra up
+./scripts.sh db migrate
+./scripts.sh auth keys
+./scripts.sh run auth  # terminal 1
+./scripts.sh run user  # terminal 2</code></pre>
+      <p>
+        Open <code>http://localhost:8001/docs</code> to register/login and
+        <code>http://localhost:8002/docs</code> for organization routes. Copy the access token
+        returned by login into the user service OpenAPI authorization dialog.
+      </p>
+      <p>
+        Run <code>./scripts.sh user test</code> for the destructive isolated test. It uses only
+        the <code>trialscribe-user-test</code> Compose project, verifies migration, JWT
+        validation, organization creation, multi-organization isolation, invitations, all
+        roles, immediate revocation, last-owner protection, PostgreSQL restart persistence, and
+        then removes its test containers, network, and volume.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="auth-service.html"><span class="page-nav__dir">Previous</span>Authentication</a>
+        <a class="page-nav__next" href="conversation-workspaces.html"><span class="page-nav__dir">Next</span>Conversation Workspaces</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#flow">Flow</a></li>
+      <li><a href="#roles">Roles</a></li>
+      <li><a href="#api-routes">API routes</a></li>
+      <li><a href="#invitation-safety-and-delivery">Invitation safety &amp; delivery</a></li>
+      <li><a href="#local-use">Local use</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

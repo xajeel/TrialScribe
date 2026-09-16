@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Gateway — TrialScribe Docs</title>
+<meta name="description" content="The single public door to the TrialScribe backend: JWT verification, organization headers, request IDs, streaming, and safe error contracts.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html" aria-current="page">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Service deep dive</p>
+      <h1>API Gateway</h1>
+      <p class="lede">
+        The API gateway is the single public door to the TrialScribe backend. The frontend
+        does not need to know that authentication, organizations, AI, and jobs are separate
+        services. It sends every backend request to the gateway, and the gateway forwards it
+        to the correct service.
+      </p>
+
+      <div class="callout">
+        <p class="callout__label">Mental model</p>
+        <p>For a simple mental model, imagine a hospital reception desk:</p>
+        <ul>
+          <li>The frontend speaks only to reception: the API gateway.</li>
+          <li>The access JWT is the person's signed identity badge.</li>
+          <li><code>X-Organization-ID</code> tells reception which organization the person wants to work in.</li>
+          <li>The user service confirms whether that person currently belongs to the organization.</li>
+          <li><code>X-Request-ID</code> is a tracking number attached to the entire request journey.</li>
+          <li>Auth, user, AI, and worker services are separate departments behind reception.</li>
+        </ul>
+      </div>
+
+      <h2 id="system-boundary">System boundary</h2>
+      <pre class="diagram"><code>Browser or mobile client
+          │
+          │ HTTP/HTTPS to one public backend address
+          ▼
+     API gateway
+          │
+          ├── /v1/auth/*                     ──&gt; Authentication service
+          ├── /v1/organizations*             ──&gt; User service
+          ├── /v1/organization-invitations/* ──&gt; User service
+          ├── /v1/ai/*                       ──&gt; AI service
+          └── /v1/jobs/*                     ──&gt; Worker service</code></pre>
+      <p>
+        The gateway is an independent FastAPI application. It communicates with downstream
+        services over HTTP and never imports their FastAPI applications or business logic.
+        Each service can still run, test, and deploy independently.
+      </p>
+
+      <h2 id="route-map">Route map</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Public gateway route</th><th>Destination</th><th>Destination path</th><th>Requirements</th></tr></thead>
+          <tbody>
+            <tr><td><code>/v1/auth/*</code></td><td>Authentication service</td><td>Unchanged</td><td>Register, login, refresh, and logout are public <code>POST</code> operations; other routes require an access JWT</td></tr>
+            <tr><td><code>/v1/organizations*</code></td><td>User service</td><td>Unchanged</td><td>Valid access JWT</td></tr>
+            <tr><td><code>/v1/organization-invitations/*</code></td><td>User service</td><td>Unchanged</td><td>Valid access JWT</td></tr>
+            <tr><td><code>/v1/ai/*</code></td><td>AI service</td><td><code>/v1/ai</code> removed</td><td>Valid access JWT and current organization membership</td></tr>
+            <tr><td><code>/v1/jobs/*</code></td><td>Worker service</td><td><code>/v1/jobs</code> removed</td><td>Valid access JWT and current organization membership</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        For example, <code>POST /v1/ai/sessions</code> at the gateway becomes
+        <code>POST /sessions</code> at the AI service. Query parameters and the request body
+        are preserved.
+      </p>
+
+      <h2 id="protected-request-flow">Protected request flow</h2>
+      <p>Consider an AI request for organization <code>8f...</code>:</p>
+      <pre class="diagram"><code>1. Browser
+   POST /v1/ai/sessions
+   Authorization: Bearer &lt;access-jwt&gt;
+   X-Organization-ID: 8f...
+   X-Request-ID: 41...              optional
+                  │
+                  ▼
+2. Gateway validates the JWT
+   - Ed25519 signature
+   - issuer and audience
+   - required identity and time claims
+   - access-token type and expiry
+                  │
+                  ▼
+3. Gateway asks the user service
+   GET /v1/organizations/8f...
+   - same bearer token
+   - same X-Request-ID
+                  │
+                  ▼
+4. Membership exists: gateway forwards to the AI service
+   POST /sessions
+   - same bearer token and X-Request-ID
+   - trusted X-TrialScribe-Account-ID
+   - trusted X-TrialScribe-Organization-ID
+                  │
+                  ▼
+5. Browser receives the upstream response and the same X-Request-ID</code></pre>
+      <p>
+        The gateway validates the JWT early, but downstream services still receive the bearer
+        token and perform their own authorization. This gives two security layers: a gateway
+        mistake alone does not grant access to a protected service.
+      </p>
+
+      <h2 id="organization-safety">Organization safety</h2>
+      <p>
+        The browser supplies <code>X-Organization-ID</code> only to select an organization. The
+        gateway does not trust browser-supplied internal identity headers. It removes any
+        client values for <code>X-TrialScribe-Account-ID</code> and
+        <code>X-TrialScribe-Organization-ID</code>, then writes verified values of its own.
+      </p>
+      <p>
+        AI and job calls use a live membership check instead of trusting a role stored in the
+        JWT. Therefore, removing a person from an organization takes effect immediately; the
+        person does not keep organization access until the 15-minute JWT expires.
+      </p>
+
+      <h2 id="request-ids">Request IDs</h2>
+      <p>Every request has one UUID <code>X-Request-ID</code>:</p>
+      <ul>
+        <li>A valid UUID supplied by the client is preserved.</li>
+        <li>A missing or invalid value is replaced with a generated UUID.</li>
+        <li>The same value reaches membership verification and the destination service.</li>
+        <li>The gateway returns it in the browser response.</li>
+      </ul>
+      <p>
+        This ID lets logs from multiple services be matched to one user action without placing
+        a password, token, email, or clinical data in the tracking value.
+      </p>
+
+      <h2 id="streaming-and-response-forwarding">Streaming and response forwarding</h2>
+      <p>
+        The gateway streams request and response bodies. It does not first load an entire
+        upload or AI response into memory. One shared HTTP client also reuses downstream
+        connections instead of opening a new connection for every request.
+      </p>
+      <p>
+        It preserves the downstream status, response body, safe headers, content type, and
+        separate <code>Set-Cookie</code> headers. Connection-specific headers are removed
+        because they apply only to one network hop. Requests are not automatically retried,
+        because repeating registration, invitation, upload, or other writes could perform the
+        same action twice.
+      </p>
+      <p>
+        The gateway waits for at most the first upstream body chunk before starting the browser
+        response. If that first chunk times out, the gateway can still return the fixed
+        <code>504</code> response. After any response bytes have reached the browser, HTTP does
+        not allow changing the status to <code>504</code>; a later timeout therefore closes the
+        upstream response and aborts the incomplete stream with no HTTPX exception details
+        exposed. Only the first chunk is prefetched, so successful large responses remain
+        streamed instead of being buffered in gateway memory.
+      </p>
+
+      <h2 id="safe-errors">Safe errors</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>401</code></td><td>The access JWT is missing or invalid</td></tr>
+            <tr><td><code>403</code></td><td>The account is authenticated but does not belong to the selected organization</td></tr>
+            <tr><td><code>422</code></td><td><code>X-Organization-ID</code> is missing, malformed, or not a UUID</td></tr>
+            <tr><td><code>503</code></td><td>A required downstream service is unavailable</td></tr>
+            <tr><td><code>504</code></td><td>A downstream service exceeded its configured timeout</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        These responses use fixed public messages. They do not return connection strings,
+        exception text, stack traces, tokens, or internal service details.
+      </p>
+
+      <h2 id="cors-and-browser-access">CORS and browser access</h2>
+      <p>
+        Credentialed browser requests are accepted only from origins explicitly configured in
+        <code>GATEWAY_CORS_ORIGINS</code>. A wildcard origin is rejected. This permits the
+        frontend to use the authentication service's protected refresh cookies without allowing
+        every website to call the backend with browser credentials.
+      </p>
+
+      <h2 id="running-locally">Running locally</h2>
+      <p>Prepare the environment and infrastructure:</p>
+      <pre><code>./scripts.sh env
+./scripts.sh auth keys
+./scripts.sh infra up
+./scripts.sh db migrate</code></pre>
+      <p>Run each service in its own terminal:</p>
+      <pre><code>./scripts.sh run auth
+./scripts.sh run user
+./scripts.sh run ai
+./scripts.sh run worker
+./scripts.sh run gateway</code></pre>
+      <p>
+        The gateway listens on port <code>8000</code> by default. Its process health endpoints
+        are <code>GET /health/live</code> and <code>GET /health/ready</code>. Run
+        <code>./scripts.sh smoke</code> while local infrastructure is available to start and
+        verify every platform boundary automatically.
+      </p>
+
+      <h2 id="single-server-deployment-and-future-nginx">Single-server deployment and future Nginx</h2>
+      <p>
+        All services can initially run as separate containers on one server. Only the frontend
+        and gateway need public exposure; PostgreSQL, Redis, Kafka, auth, user, AI, and worker
+        remain on the server's private container network.
+      </p>
+      <pre class="diagram"><code>Internet
+   │
+   ▼
+Nginx (future TLS and static frontend)
+   ├── /            ──&gt; React frontend files
+   └── /v1/*        ──&gt; FastAPI API gateway
+                           ├── auth container
+                           ├── user container
+                           ├── AI container
+                           └── worker container</code></pre>
+      <p>
+        Nginx would sit in front of both the frontend and the FastAPI gateway. Nginx would
+        normally terminate HTTPS and serve or route the frontend, while the FastAPI gateway
+        would continue to own application routing, JWT checks, organization verification,
+        trusted identity headers, request IDs, and safe downstream errors.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="setup.html"><span class="page-nav__dir">Previous</span>Setup &amp; commands</a>
+        <a class="page-nav__next" href="auth-service.html"><span class="page-nav__dir">Next</span>Authentication</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#system-boundary">System boundary</a></li>
+      <li><a href="#route-map">Route map</a></li>
+      <li><a href="#protected-request-flow">Protected request flow</a></li>
+      <li><a href="#organization-safety">Organization safety</a></li>
+      <li><a href="#request-ids">Request IDs</a></li>
+      <li><a href="#streaming-and-response-forwarding">Streaming &amp; forwarding</a></li>
+      <li><a href="#safe-errors">Safe errors</a></li>
+      <li><a href="#cors-and-browser-access">CORS</a></li>
+      <li><a href="#running-locally">Running locally</a></li>
+      <li><a href="#single-server-deployment-and-future-nginx">Nginx deployment</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

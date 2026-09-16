@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker Service — TrialScribe Docs</title>
+<meta name="description" content="Background job execution, RAG indexing and retrieval, web research evidence, and citation-backed generation — the service where the clinical writing work happens.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html" aria-current="page">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Service deep dive</p>
+      <h1>Worker Service</h1>
+      <p class="lede">
+        The worker service is where the clinical-writing work actually happens. Other services
+        accept requests, store state, or route traffic; the worker indexes an uploaded protocol
+        document, searches PubMed and a shortlist of medical websites for supporting evidence,
+        drafts an ICH M11 section with citations a reviewer can check, and assembles the finished
+        Word export. It runs as an independent Python application and, unlike the other backend
+        services, ships as two separate processes that share one codebase.
+      </p>
+
+      <p>For a simple mental model, imagine a request desk with a back office:</p>
+      <ul>
+        <li>Other services hand the worker a ticket: "index this file," "draft section 4," "check whether this protocol is ready to export."</li>
+        <li>The ticket is written to PostgreSQL and a Kafka queue in one indivisible step.</li>
+        <li>One process, the job runtime, is the only one that reads the queue and does the work.</li>
+        <li>A second, smaller process, the HTTP API, lets the front desk create a ticket, check its status, cancel it, or download what it produced. It never does the work itself.</li>
+      </ul>
+
+      <h2 id="service-boundary">Service boundary</h2>
+      <p>
+        <code>./scripts.sh run worker</code> starts <code>trialscribe_worker.api.app</code>, a
+        FastAPI application on port <code>8004</code>. It has no queue reader and no provider
+        connections; it only reads and writes job tickets, generation attempts, usage totals,
+        readiness snapshots, and exports already sitting in PostgreSQL or Redis.
+        <code>./scripts.sh run jobs</code> starts <code>trialscribe_worker.runtime.main</code>,
+        which owns every external connection the work itself needs — PostgreSQL, Redis, Kafka,
+        Chroma, and the configured chat/embedding providers — and is the only process that ever
+        executes a pipeline. Both must be running for background work to complete: the API
+        accepts and reports on tickets, the runtime consumes them.
+      </p>
+      <p>
+        The HTTP API is more than a health check. Besides <code>GET /health/live</code> and
+        <code>GET /health/ready</code>, <code>trialscribe_worker/api/jobs.py</code> exposes a
+        <code>/jobs</code> router:
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method</th><th>Route</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/jobs</code></td><td>Create a job ticket and enqueue it</td></tr>
+            <tr><td>GET</td><td><code>/jobs</code></td><td>List a conversation's tickets, newest first</td></tr>
+            <tr><td>GET</td><td><code>/jobs/{id}</code></td><td>Read one ticket, with live progress</td></tr>
+            <tr><td>POST</td><td><code>/jobs/{id}/cancel</code></td><td>Cancel a queued ticket, or ask a running one to stop</td></tr>
+            <tr><td>GET</td><td><code>/jobs/{id}/attempts</code></td><td>Read the latest per-section generation outcome</td></tr>
+            <tr><td>GET</td><td><code>/jobs/{id}/rewrite-options</code></td><td>Read the alternative drafts a rewrite job proposed</td></tr>
+            <tr><td>GET</td><td><code>/jobs/readiness</code></td><td>Read the latest protocol readiness snapshot</td></tr>
+            <tr><td>GET</td><td><code>/jobs/usage</code></td><td>Read token and cost totals for a conversation</td></tr>
+            <tr><td>GET</td><td><code>/jobs/exports</code></td><td>List stored Word exports for a conversation</td></tr>
+            <tr><td>GET</td><td><code>/jobs/exports/{id}/file</code></td><td>Download one stored export</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Every route reads <code>X-TrialScribe-Account-ID</code> and
+        <code>X-TrialScribe-Organization-ID</code>, the same trusted headers the gateway writes
+        for AI Engine calls, so the worker never re-verifies membership itself.
+      </p>
+      <p>
+        The worker does not own every table it touches. It owns <code>jobs</code>,
+        <code>evidence_chunks</code>, <code>provider_calls</code>,
+        <code>section_generation_attempts</code>, <code>protocol_exports</code>, and
+        <code>protocol_readiness_checks</code> — all under the shared <code>trialscribe</code>
+        PostgreSQL schema. It also reads and writes <code>trialscribe.conversations</code>,
+        <code>trialscribe.documents</code>, and <code>trialscribe.m11_sections</code>, tables
+        owned by other services' migrations, through plain SQL rather than by importing their
+        application code.
+      </p>
+
+      <h2 id="job-kinds">Job kinds and the event flow</h2>
+      <p>
+        <code>JobKind</code> names seven kinds of work: <code>probe</code>,
+        <code>provider_probe</code>, <code>index_document</code>, <code>research_web</code>,
+        <code>generate_sections</code>, <code>validate_readiness</code>, and
+        <code>export_protocol</code>. <code>runtime/main.py</code> maps each kind to a pipeline
+        function from <code>pipelines/</code>. <code>probe</code> and
+        <code>provider_probe</code> exist to exercise the runtime and the provider gateway end to
+        end without touching real trial content; the other five are the product pipelines.
+      </p>
+      <p>
+        A ticket reaches the runtime one of two ways. A user action (through the gateway) calls
+        <code>POST /jobs</code>, and <code>JobService.request_job</code> writes the job row and
+        its <code>job.requested</code> event into the outbox in the same transaction — never
+        publishing directly, since a crash between "write the ticket" and "publish the message"
+        would otherwise either lose the message or hand out a ticket nobody committed. The other
+        route is automatic: when AI Engine publishes <code>document.uploaded</code>,
+        <code>pipelines/document_events.py</code> reacts by calling the same
+        <code>request_job</code> to enqueue an <code>index_document</code> job;
+        <code>document.deleted</code> instead removes that document's evidence chunks directly,
+        with no job involved.
+      </p>
+      <p>
+        <code>services/job_runner.py</code> is what turns a <code>job.requested</code> record
+        into a result. <code>JobRunner.handle</code> first claims the ticket — an update that
+        only succeeds while the job's status is <code>queued</code>, <code>running</code>, or
+        <code>retrying</code>, which is what makes a redelivered event harmless. Retries happen
+        at two layers: the shared event consumer retries a failing handler up to
+        <code>max_delivery_attempts</code> (3 by default) with jittered backoff before writing to
+        a dead-letter topic, and each retry reclaims the ticket and increments its own attempt
+        count. On the last attempt the job is marked <code>failed</code> with error code
+        <code>handler_failed</code> (or <code>cancelled</code>, if a cancellation was
+        requested) — written in the same transaction as the event consumer's own
+        <code>processed_events</code> receipt, so the two can never disagree about whether the
+        job's outcome is final.
+      </p>
+      <p>
+        Pipeline-specific failures are recorded at a finer grain: <code>index_document</code>
+        writes a status and reason onto the document row itself (document could not be
+        processed, contained no extractable text, or indexing failed), and
+        <code>generate_sections</code> writes one row per section attempt with its own error
+        code (<code>missing_section</code>, <code>empty_output</code>, <code>provider_failed</code>,
+        <code>revision_conflict</code>, <code>invalid_selection</code>).
+      </p>
+
+      <h2 id="provider-gateway">The provider gateway</h2>
+      <p>
+        Every chat and embedding call, from every pipeline, goes through
+        <code>providers/gateway.py</code> — nothing calls a provider client directly. The
+        gateway applies, in order: a per-operation concurrency limit
+        (<code>provider_max_concurrency</code>, 8 by default) so one job cannot starve every
+        other job's calls; an overall timeout (<code>provider_timeout_seconds</code>, 30s); a
+        retry with full-jitter exponential backoff for a timeout, rate limit, or transport
+        failure (<code>provider_retry_attempts</code>, 3); and a circuit breaker per operation
+        that opens after 5 consecutive retryable failures and stays open for 30 seconds before
+        allowing calls through again to test whether the provider has recovered. A non-retryable
+        error (a bad request, an unsupported model) is not retried and does not count toward the
+        breaker.
+      </p>
+      <p>
+        <code>providers/factory.py</code> builds the configured backend from
+        <code>WORKER_CHAT_PROVIDER</code> and <code>WORKER_EMBEDDING_PROVIDER</code>:
+        <code>fake</code> for both by default, <code>deepseek</code> (via the OpenAI-compatible
+        SDK) for chat, and <code>fastembed</code> (a local sentence-embedding model) for
+        embeddings. The fake chat provider echoes the last user message back, and the fake
+        embedding provider returns a deterministic vector derived from a hash of the input text —
+        the same text always embeds to the same vector, with no model file or network call. Both
+        fakes accept an optional injected fault (a delay, an error to raise, and how many calls
+        should fail before succeeding), configured through <code>WORKER_FAKE_CHAT_FAULT_*</code>
+        environment variables — how a stress campaign exercises retries and circuit breaking
+        without a real provider.
+      </p>
+      <p>
+        Every call is metered whether it succeeds or fails: token counts, latency, outcome, and a
+        cost figure are recorded into <code>trialscribe.provider_calls</code> in their own short
+        transaction, so a metering failure never undoes a provider call that already succeeded.
+        Each chat request carries an idempotency key built from the job id, attempt number, and
+        the specific call; a repeat of the exact same key is answered from the stored token and
+        cost figures rather than billed twice. Embedding calls are never answered this way — every
+        embed call reaches the provider.
+      </p>
+
+      <h2 id="rag">RAG indexing and retrieval</h2>
+      <p>
+        <code>retrieval/extraction.py</code> turns stored file bytes into plain text: UTF-8 text
+        and Markdown pass through as-is, PDFs are read with <code>pypdf</code> (an encrypted PDF
+        is refused), and the structured trial-data JSON format is flattened into labelled lines
+        (title, phase, disease area, interventions, inclusion/exclusion criteria).
+        <code>retrieval/chunking.py</code> then splits that text into overlapping spans
+        (1,200 characters with 200-character overlap by default), preferring to break on a
+        paragraph, then a sentence, then a word boundary.
+      </p>
+      <p>
+        <code>index_document</code> runs extract, then chunk, then embed in batches of 32 through
+        the gateway, then stores the batch. Storage is tenant-scoped and split across two stores:
+        PostgreSQL writes the passage text, its character span, page number, and provenance —
+        remaining the source of truth — while <code>retrieval/chroma_index.py</code>'s
+        <code>ChromaIndex</code> upserts only the vector and the chunk id into Chroma. Chroma
+        organizes vectors into one collection per conversation; every write and query
+        additionally carries an explicit organization/conversation filter, so a query can never
+        cross a tenant boundary even if it somehow reached the wrong collection.
+      </p>
+      <p>
+        Retrieval mirrors that split: the query text is embedded through the same gateway, Chroma
+        returns the nearest <code>k</code> chunk ids (8 by default) scoped to the tenant, and the
+        matching rows are loaded from PostgreSQL by id. A chunk id Chroma still has but
+        PostgreSQL no longer owns is silently dropped rather than returned, since PostgreSQL is
+        what resolves a citation later.
+      </p>
+
+      <h2 id="web-research">Web research evidence</h2>
+      <p>
+        <code>research_web</code> searches two sources for a conversation-supplied query:
+        <code>retrieval/pubmed.py</code> calls NCBI's search and fetch endpoints and parses the
+        result into title, abstract, publication date, and a PubMed URL; and
+        <code>retrieval/tavily.py</code> posts to Tavily's search API restricted to an allow-list
+        of roughly a hundred medical, regulatory, and clinical research domains — <code>fda.gov</code>,
+        <code>nih.gov</code>, <code>cdc.gov</code>, <code>clinicaltrials.gov</code>,
+        <code>nature.com</code>, <code>mayoclinic.org</code>, <code>sciencedirect.com</code>, and
+        similar. Tavily returns no results at all, rather than an error, when no API key is
+        configured.
+      </p>
+      <p>
+        The pipeline runs both searches, then merges the hits: each result is reduced to a
+        canonical URL, PubMed hits are kept unconditionally, web hits are kept only if their host
+        is still on the allow-list, and duplicate URLs keep only the first hit seen. Each kept
+        page is formatted into one passage, chunked, embedded, and stored through the same
+        evidence index used for uploaded documents, under <code>source_kind="web"</code>. Because
+        web and PubMed passages land in the same evidence store as uploaded trial documents,
+        section-drafting retrieval treats them uniformly — one search over a conversation's
+        collection can return uploaded, PubMed, and web passages side by side.
+      </p>
+
+      <h2 id="generation">Citation-backed generation and export</h2>
+      <p>
+        <code>generate_sections</code> drafts one or more of the 14 catalogued M11 section
+        numbers. For each requested section it checks the section exists, is not already done,
+        and that an optimistic-concurrency revision guard still matches — a mismatch is recorded
+        as skipped, not retried. It retrieves evidence for the section, then prompts the model
+        with a system message stating plainly that retrieved evidence and uploaded documents are
+        untrusted data, never instruction, and that it may cite a passage only with a
+        <code>[cite:&lt;uuid&gt;]</code> marker drawn from the evidence it was actually given.
+        <code>retrieval/citations.py</code> then strips any citation marker whose id was not
+        among the chunks retrieved for that call — a bound against the model citing an id it
+        invented or remembered from elsewhere.
+      </p>
+      <p>
+        The same pipeline also serves a rewrite mode: given one section, an instruction, and an
+        optional selection, it produces two alternative rewrites — one told to keep a similar
+        length, one told to tighten the wording — without saving either; the caller chooses one
+        through the conversation UI. Sections in a job succeed or fail independently, so a caller
+        can re-request just the sections still empty rather than redo ones that already landed.
+      </p>
+      <p>
+        <code>validate_readiness</code> is a read-only scoring pass checking that all 14 sections
+        exist, are done, and are non-empty, that no uploaded source is still pending or failed,
+        and that no section's citations point at evidence no longer resolvable. It writes one
+        snapshot row that both the readiness endpoint and <code>export_protocol</code> read back
+        rather than recomputing.
+      </p>
+      <p>
+        <code>export_protocol</code> does not draft or edit any section text. It loads the latest
+        readiness snapshot and refuses to export if none exists or if the conversation has had
+        activity since the snapshot was computed; an export scoped to done-only sections
+        additionally refuses unless the snapshot says the protocol is ready. It assembles a Word
+        document with a title page, one heading per section, citation markers replaced by
+        sequential numbers in first-appearance order, and a closing references section — stored
+        and served back through <code>GET /jobs/exports/{id}/file</code>.
+      </p>
+
+      <h2 id="running-locally">Running locally</h2>
+      <p>Bootstrap the environment and infrastructure once, from the repository root:</p>
+      <pre><code>./scripts.sh env
+./scripts.sh install
+./scripts.sh infra up
+./scripts.sh db migrate</code></pre>
+      <p>The worker needs both of its processes running. In separate terminals:</p>
+      <pre><code>./scripts.sh run worker   # HTTP API on port 8004 (WORKER_PORT)
+./scripts.sh run jobs     # Kafka consumer + pipelines — trialscribe_worker.runtime.main</code></pre>
+      <p>
+        <code>WORKER_CHAT_PROVIDER</code> and <code>WORKER_EMBEDDING_PROVIDER</code> default to
+        <code>fake</code> in <code>.env_example</code>, so <code>./scripts.sh run jobs</code>
+        drafts sections, embeds text, and passes through the provider gateway's full retry and
+        circuit-breaking logic without any external API key. To exercise the real chat model, set
+        <code>WORKER_CHAT_PROVIDER=deepseek</code> and <code>DEEPSEEK_API_KEY</code>; to embed
+        with a real local model, set <code>WORKER_EMBEDDING_PROVIDER=fastembed</code>. Web
+        research needs its own keys regardless: <code>TAVILY_API_KEY</code> for website search
+        and <code>NCBI_API_KEY</code> for PubMed.
+      </p>
+      <p>
+        <code>./scripts.sh jobs test</code> runs an isolated, disposable integration check of the
+        background job runtime against its own Postgres/Redis/Kafka containers, then removes
+        them. The job runtime also publishes Prometheus metrics on its own port
+        (<code>WORKER_JOBS_METRICS_PORT</code>, 8006 by default), separate from the HTTP API's
+        port.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="conversation-workspaces.html"><span class="page-nav__dir">Previous</span>Conversation Workspaces</a>
+        <a class="page-nav__next" href="../index.html"><span class="page-nav__dir">Back to</span>Overview</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#service-boundary">Service boundary</a></li>
+      <li><a href="#job-kinds">Job kinds &amp; event flow</a></li>
+      <li><a href="#provider-gateway">The provider gateway</a></li>
+      <li><a href="#rag">RAG indexing &amp; retrieval</a></li>
+      <li><a href="#web-research">Web research evidence</a></li>
+      <li><a href="#generation">Generation &amp; export</a></li>
+      <li><a href="#running-locally">Running locally</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>

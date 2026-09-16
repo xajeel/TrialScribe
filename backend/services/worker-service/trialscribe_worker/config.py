@@ -19,6 +19,9 @@ from trialscribe_worker.utils.constant import (
     DEFAULT_EMBEDDING_DIMENSIONS,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_EMBEDDING_PROVIDER,
+    DEFAULT_FAKE_CHAT_FAULT_DELAY_SECONDS,
+    DEFAULT_FAKE_CHAT_FAULT_ERROR,
+    DEFAULT_FAKE_CHAT_FAULT_FAIL_TIMES,
     DEFAULT_PROVIDER_MAX_CONCURRENCY,
     DEFAULT_PROVIDER_RETRY_ATTEMPTS,
     DEFAULT_PROVIDER_RETRY_BASE_SECONDS,
@@ -28,6 +31,7 @@ from trialscribe_worker.utils.constant import (
     DEFAULT_RESEARCH_RETRY_ATTEMPTS,
     DEFAULT_RESEARCH_TIMEOUT_SECONDS,
     DEFAULT_RETRIEVE_K,
+    FAKE_CHAT_FAULT_ERROR_VALUES,
     MAX_PROGRESS,
     MIN_PROGRESS,
     PRICING_VERSION_DEFAULT,
@@ -96,6 +100,25 @@ class WorkerSettings(BaseSettings):
         ge=1,
     )
     jobs_metrics_port: int = Field(default=8006, ge=1, le=65535)
+    fake_chat_fault_delay_seconds: float = Field(
+        default=DEFAULT_FAKE_CHAT_FAULT_DELAY_SECONDS,
+        ge=0,
+    )
+    fake_chat_fault_error: str = Field(default=DEFAULT_FAKE_CHAT_FAULT_ERROR)
+    fake_chat_fault_fail_times: int = Field(
+        default=DEFAULT_FAKE_CHAT_FAULT_FAIL_TIMES,
+        ge=0,
+    )
+
+    @field_validator("fake_chat_fault_error")
+    @classmethod
+    def validate_fake_chat_fault_error(cls, value: str) -> str:
+        if value not in FAKE_CHAT_FAULT_ERROR_VALUES:
+            raise ValueError(
+                "WORKER_FAKE_CHAT_FAULT_ERROR must be one of "
+                f"{FAKE_CHAT_FAULT_ERROR_VALUES}"
+            )
+        return value
 
     @field_validator("supervisor_restart_cap_seconds")
     @classmethod

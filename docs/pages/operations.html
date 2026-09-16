@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations — TrialScribe Docs</title>
+<meta name="description" content="Operator handbook for the TrialScribe Docker Compose release stack: start, backup, restore, upgrade, rollback, and load-test.">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <button class="nav-toggle" data-nav-toggle aria-expanded="false" aria-controls="sidebar">☰ <span>Menu</span></button>
+    <a class="brand" href="../index.html">TrialScribe <span>Docs</span></a>
+    <div class="header-spacer"></div>
+    <a class="header-link" href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener"><span class="header-link__label">GitHub</span> ↗</a>
+  </div>
+</header>
+<div class="nav-scrim" data-nav-scrim></div>
+
+<div class="layout">
+  <nav class="sidebar" data-sidebar id="sidebar">
+    <h2>Overview</h2>
+    <ul><li><a href="../index.html">Overview</a></li></ul>
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="architecture.html">Architecture</a></li>
+      <li><a href="stress-test.html">Stress Test Report</a></li>
+      <li><a href="operations.html" aria-current="page">Operations</a></li>
+      <li><a href="setup.html">Setup &amp; commands</a></li>
+    </ul>
+    <h2>Services</h2>
+    <ul>
+      <li><a href="api-gateway.html">API Gateway</a></li>
+      <li><a href="auth-service.html">Authentication</a></li>
+      <li><a href="organization-rbac.html">Organizations &amp; RBAC</a></li>
+      <li><a href="conversation-workspaces.html">Conversation Workspaces</a></li>
+      <li><a href="worker-service.html">Worker Service</a></li>
+    </ul>
+  </nav>
+
+  <main id="content" class="content">
+    <article>
+      <p class="eyebrow">Guide · Operator handbook</p>
+      <h1>Operations</h1>
+      <p class="lede">
+        This is the operator handbook for the <strong>release</strong> stack: the Docker
+        Compose deployment that runs the whole product on one host. It is the v1 production
+        path. The UI is the React app in <code>frontend/web</code>.
+      </p>
+
+      <h2 id="start">Start</h2>
+      <p>On a clean host with Docker Compose 2.24.4 or newer, <code>uv</code>, and Node.js 24.18.0:</p>
+      <pre><code>./scripts.sh env
+./scripts.sh install
+./scripts.sh auth keys
+./scripts.sh release up
+./scripts.sh release smoke</code></pre>
+      <p>
+        <code>release up</code> starts PostgreSQL, Redis, Kafka, Chroma, Prometheus, Grafana,
+        applies the current database schema, then starts the API gateway, auth, user, AI,
+        worker, jobs reader, and the React website. Only the gateway, website, Prometheus, and
+        Grafana are published on loopback (<code>127.0.0.1</code>). Everything else stays on
+        the internal Docker network.
+      </p>
+      <p>
+        Open the website at <code>http://127.0.0.1:8080</code> (override with
+        <code>RELEASE_WEB_PORT</code>). Port 8000 is the API gateway only —
+        <code>GET /</code> there is JSON 404, not the React app. Interactive API docs are at
+        <code>http://127.0.0.1:8000/docs</code> (Swagger) and
+        <code>http://127.0.0.1:8000/redoc</code>. Grafana is
+        <code>http://127.0.0.1:3000</code> (user <code>admin</code>, password from
+        <code>GRAFANA_ADMIN_PASSWORD</code>).
+      </p>
+      <p>Stop with <code>./scripts.sh release down</code>. Named volumes keep data until you pass <code>--volumes</code>.</p>
+      <div class="callout callout--amber">
+        <p class="callout__label">Production checklist</p>
+        <p>
+          Never commit <code>.env</code>. On HTTPS, set <code>AUTH_COOKIE_SECURE=true</code>
+          and replace every <code>change-me-local</code> secret. The release overlay keeps
+          chat and embedding providers on <code>fake</code> so a load run cannot spend vendor
+          quota; point <code>WORKER_CHAT_PROVIDER</code> at DeepSeek only after keys are in
+          place.
+        </p>
+      </div>
+
+      <h2 id="backup">Backup</h2>
+      <p>
+        PostgreSQL is the source of record for accounts, organizations, conversations, jobs,
+        and evidence text. Redis AOF and Kafka logs are not a clinical backup.
+      </p>
+      <pre><code>./scripts.sh release backup</code></pre>
+      <p>
+        That writes a PostgreSQL <code>pg_dump -Fc</code> custom-format file to
+        <code>backups/trialscribe-release.dump</code> (override the directory with
+        <code>RELEASE_BACKUP_DIR</code>). The command does not print connection URLs or
+        passwords. Keep dump files off the git tree (<code>/backups/</code> is gitignored).
+      </p>
+
+      <h2 id="restore">Restore</h2>
+      <p>Restore stops the application containers, loads the dump, then starts them again:</p>
+      <pre><code>./scripts.sh release restore</code></pre>
+      <p>
+        This replaces the live database with the dump. There is no in-place merge. Take a
+        fresh backup first if you might need the current data.
+      </p>
+      <p>
+        <code>./scripts.sh release test</code> rehearses this: it writes a probe row, dumps,
+        deletes the row, restores, and checks the row is back.
+      </p>
+
+      <h2 id="restart">Restart</h2>
+      <pre><code>./scripts.sh release restart</code></pre>
+      <p>
+        Restarts the gateway and checks <code>/health/live</code>, <code>/health/ready</code>,
+        and the website root. Compose <code>restart: unless-stopped</code> brings a crashed
+        service back on its own.
+      </p>
+
+      <h2 id="upgrade">Upgrade</h2>
+      <p>
+        Image tags are pinned (Python 3.12.3, uv 0.10.7, nginx 1.30.4-alpine, k6 2.2.0, and
+        the infrastructure tags in <code>docker-compose.yml</code>). To pick up a new build of
+        <em>this</em> repository:
+      </p>
+      <pre><code>./scripts.sh release down
+./scripts.sh release up</code></pre>
+      <p>
+        <code>up</code> rebuilds application images and runs the migrate container to the
+        current schema head. Do not run <code>alembic downgrade</code> unless a named revision
+        and a written rollback note exist for that change.
+      </p>
+
+      <h2 id="rollback">Rollback</h2>
+      <ol>
+        <li><code>./scripts.sh release down</code></li>
+        <li>Check out the previous known-good git revision (or rebuild the previous image tags).</li>
+        <li><code>./scripts.sh release up</code></li>
+        <li>If data must go back too, <code>./scripts.sh release restore</code> from the dump taken before the upgrade.</li>
+      </ol>
+      <p>Prefer restore-from-dump over schema downgrade.</p>
+
+      <h2 id="load-and-capacity">Load and capacity</h2>
+      <pre><code>./scripts.sh release load          # 20 virtual users, 30 seconds
+./scripts.sh release load --full   # 500 virtual users, 2 minutes</code></pre>
+      <p>
+        Both commands use Grafana k6 (<code>grafana/k6:2.2.0</code>) against fake chat and
+        embedding providers. They temporarily raise the gateway's per-IP request limits
+        because a single generator address is standing in for many people.
+        <code>./scripts.sh release up</code> keeps the production limits (120 requests and 20
+        auth requests per minute per IP).
+      </p>
+      <p>
+        Probe jobs (<code>kind=probe</code>) measure queue drain without calling a vendor. The
+        default check enqueues 10 jobs and expects <code>succeeded</code> within 60 seconds.
+        <code>--full</code> enqueues 120 jobs (about one minute of an 8-hour day at 10,000
+        jobs/day) with a 3-minute budget.
+      </p>
+
+      <h3 id="mapping">Mapping</h3>
+      <ul>
+        <li>10,000 jobs/day spread evenly is about 7 jobs per minute.</li>
+        <li>The same 10,000 jobs in an 8-hour workday is about 21 jobs per minute.</li>
+        <li>500 concurrent users means 500 k6 virtual users for 2 minutes on <code>--full</code>.</li>
+      </ul>
+      <p>
+        Thresholds: HTTP failed rate under 1%, HTTP p95 under 2 seconds on the scaled default
+        (20 users / 30 seconds, containers capped at half a CPU), and under 500&nbsp;ms on
+        <code>--full</code> against reference hardware. Every probe job must
+        <code>succeeded</code>, and no out-of-memory kills.
+      </p>
+
+      <h2 id="reference-hardware">Reference hardware</h2>
+      <p>
+        Capacity numbers (500 concurrent users, 10,000 jobs per day) may be cited only after
+        <code>./scripts.sh release load --full</code> on a host with
+        <strong>8 vCPU, 32 GiB RAM, and 500 GB SSD</strong>. A laptop run is the scaled default
+        (<code>20</code> users / <code>30s</code>) and is not that claim.
+      </p>
+
+      <h2 id="full-check">Full check</h2>
+      <pre><code>./scripts.sh release test</code></pre>
+      <p>
+        Starts a throwaway <code>trialscribe-release</code> project, then smoke,
+        backup/restore rehearsal, gateway restart, probe-job drain, and scaled k6. It always
+        deletes that project's containers and volumes when it finishes. Stop a conflicting
+        <code>./scripts.sh infra up</code> first if ports 8000, 8080, 9090, or 3000 are already
+        taken.
+      </p>
+
+      <nav class="page-nav">
+        <a class="page-nav__prev" href="stress-test.html"><span class="page-nav__dir">Previous</span>Stress Test Report</a>
+        <a class="page-nav__next" href="setup.html"><span class="page-nav__dir">Next</span>Setup &amp; commands</a>
+      </nav>
+    </article>
+  </main>
+
+  <aside class="toc">
+    <p class="toc__title">On this page</p>
+    <ul>
+      <li><a href="#start">Start</a></li>
+      <li><a href="#backup">Backup</a></li>
+      <li><a href="#restore">Restore</a></li>
+      <li><a href="#restart">Restart</a></li>
+      <li><a href="#upgrade">Upgrade</a></li>
+      <li><a href="#rollback">Rollback</a></li>
+      <li><a href="#load-and-capacity">Load and capacity</a></li>
+      <li><a href="#reference-hardware">Reference hardware</a></li>
+      <li><a href="#full-check">Full check</a></li>
+    </ul>
+  </aside>
+</div>
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <span>TrialScribe — ICH M11 clinical trial protocol drafting.</span>
+    <span><a href="https://github.com/xajeel/TrialScribe" target="_blank" rel="noopener">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script src="../assets/js/site.js"></script>
+</body>
+</html>
